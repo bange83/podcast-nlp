@@ -16,6 +16,28 @@ class PodcastPipeline:
         self.transcriber = AudioTranscriber(model_size=whisper_model)
         self.analyzer = LocalNLPAnalyzer(model_name=ollama_model)
 
+    def process_search(
+        self,
+        query: str,
+        limit: int = 1,
+        language: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Sucht nach einem Podcast-Namen, wählt den ersten Treffer und verarbeitet ihn."""
+        print(f"\n🔍 Suche nach Podcast: '{query}'...")
+        results = self.downloader.search_podcasts(query, limit=3)
+        if not results:
+            raise ValueError(f"Kein Podcast für die Suche '{query}' gefunden.")
+
+        best_match = results[0]
+        print(f"✅ Treffer gefunden: '{best_match['name']}' von {best_match['artist']}")
+        print(f"📡 Feed-URL: {best_match['feed_url']}")
+
+        return self.process_feed(
+            feed_url=best_match["feed_url"],
+            limit=limit,
+            language=language
+        )
+
     def process_feed(
         self,
         feed_url: str,

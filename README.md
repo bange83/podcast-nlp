@@ -66,18 +66,24 @@ podcast-nlp/
 
 ## Benutzung
 
-### 1. Podcast per RSS-Feed analysieren
-Die neueste Episode eines Feeds herunterladen, transkribieren und analysieren:
+### 1. Podcast per Name suchen & analysieren
+Einfach nach dem Namen suchen (nutzt das offene Apple-Podcasts-Verzeichnis):
 ```bash
-python3 main.py --feed "https://example.com/podcast/feed.xml"
+python3 main.py --search "Fest & Flauschig" --limit 1
+```
+
+### 2. Podcast direkt per RSS-Feed analysieren
+Die neueste Episode eines Feeds verarbeiten:
+```bash
+python3 main.py --feed "https://feeds.megaphone.fm/GLT4060321204" --limit 1
 ```
 
 Die letzten 3 Episoden verarbeiten:
 ```bash
-python3 main.py --feed "https://example.com/podcast/feed.xml" --limit 3
+python3 main.py --feed "https://feeds.megaphone.fm/GLT4060321204" --limit 3
 ```
 
-### 2. Eine bestehende lokale Audiodatei analysieren
+### 3. Eine bestehende lokale Audiodatei analysieren
 ```bash
 python3 main.py --file "data/audio/meine_aufnahme.mp3"
 ```

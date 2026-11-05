@@ -16,6 +16,11 @@ def main():
         help="URL des Podcast-RSS-Feeds"
     )
     group.add_argument(
+        "--search", "-s",
+        type=str,
+        help="Name des Podcasts für automatische Suche (z.B. 'Fest & Flauschig')"
+    )
+    group.add_argument(
         "--file", "-i",
         type=str,
         help="Pfad zu einer lokalen Audiodatei (.mp3, .m4a, .wav)"
@@ -56,6 +61,12 @@ def main():
     if args.feed:
         pipeline.process_feed(
             feed_url=args.feed,
+            limit=args.limit,
+            language=args.language
+        )
+    elif args.search:
+        pipeline.process_search(
+            query=args.search,
             limit=args.limit,
             language=args.language
         )

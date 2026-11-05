@@ -24,6 +24,35 @@ class PodcastDownloader:
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def search_podcasts(query: str, limit: int = 5) -> List[dict]:
+        """Sucht Podcasts über das offene Apple Podcasts / iTunes Verzeichnis."""
+        search_url = "https://itunes.apple.com/search"
+        params = {
+            "term": query,
+            "media": "podcast",
+            "entity": "podcast",
+            "limit": limit
+        }
+        try:
+            resp = requests.get(search_url, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            results = []
+            for item in data.get("results", []):
+                feed_url = item.get("feedUrl")
+                if feed_url:
+                    results.append({
+                        "name": item.get("collectionName"),
+                        "artist": item.get("artistName"),
+                        "feed_url": feed_url,
+                        "track_count": item.get("trackCount", 0)
+                    })
+            return results
+        except Exception as e:
+            print(f"[Downloader] Fehler bei der Podcast-Suche: {e}")
+            return []
+
     def fetch_feed_episodes(self, feed_url: str, limit: int = 5) -> List[PodcastEpisode]:
         """Liest einen RSS-Feed ein und gibt Metadaten der neuesten Episoden zurück."""
         feed = feedparser.parse(feed_url)
