@@ -149,9 +149,39 @@ class AudioTranscriber:
         txt_path = self.output_dir / f"{stem}.txt"
 
         if not force_recompute and json_path.exists() and txt_path.exists():
-            print(f"[Transcriber] Transkript existiert bereits: {json_path.name}")
             with open(json_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                existing_data = json.load(f)
+
+            # Wenn das Transkript bereits da ist, aber noch keine Sprecher hat:
+            if not existing_data.get("has_diarization") and self.hf_token:
+                print(f"[Transcriber] ✨ Nutze bestehendes Whisper-Transkript ({json_path.name})!")
+                print("[Transcriber] Starte nur die fehlende Sprechererkennung (Diarization)...")
+                diarization = self._run_diarization(audio_path)
+                if diarization:
+                    segments = existing_data.get("segments", [])
+                    dialogue_lines = []
+                    for seg in segments:
+                        spk = self._assign_speaker_to_segment(seg["start"], seg["end"], diarization)
+                        seg["speaker"] = spk
+                        if spk != "UNKNOWN":
+                            dialogue_lines.append(f"[{seg['start']}s - {seg['end']}s] {spk}: {seg['text']}")
+                        else:
+                            dialogue_lines.append(f"[{seg['start']}s - {seg['end']}s] {seg['text']}")
+
+                    existing_data["has_diarization"] = True
+                    existing_data["full_text"] = "\n".join(dialogue_lines)
+                    existing_data["segments"] = segments
+
+                    with open(json_path, "w", encoding="utf-8") as f:
+                        json.dump(existing_data, f, ensure_ascii=False, indent=2)
+                    with open(txt_path, "w", encoding="utf-8") as f:
+                        f.write(existing_data["full_text"])
+
+                    print(f"[Transcriber] Sprecher erfolgreich zugeordnet!")
+                    return existing_data
+
+            print(f"[Transcriber] Transkript existiert bereits: {json_path.name}")
+            return existing_data
 
         # 1. Optionale Diarization (Sprechererkennung)
         diarization = self._run_diarization(audio_path)
