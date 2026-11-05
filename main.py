@@ -56,26 +56,40 @@ def main():
         default=None,
         help="Hugging Face User Access Token für PyAnnote Sprechertrennung (kann auch in .env definiert werden)"
     )
+    parser.add_argument(
+        "--threads", "-t",
+        type=int,
+        default=8,
+        help="Anzahl CPU-Threads für Whisper (Standard: 8, optimal für Apple Silicon M-Serie)"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Erzwingt erneute Transkription und Analyse, selbst wenn Dateien bereits existieren"
+    )
 
     args = parser.parse_args()
 
     pipeline = PodcastPipeline(
         whisper_model=args.whisper_model,
         ollama_model=args.llm_model,
-        hf_token=args.hf_token
+        hf_token=args.hf_token,
+        cpu_threads=args.threads
     )
 
     if args.feed:
         pipeline.process_feed(
             feed_url=args.feed,
             limit=args.limit,
-            language=args.language
+            language=args.language,
+            force=args.force
         )
     elif args.search:
         pipeline.process_search(
             query=args.search,
             limit=args.limit,
-            language=args.language
+            language=args.language,
+            force=args.force
         )
     elif args.file:
         file_path = Path(args.file).resolve()
@@ -83,7 +97,8 @@ def main():
             raise FileNotFoundError(f"Datei nicht gefunden: {file_path}")
         pipeline.process_audio_file(
             audio_path=file_path,
-            language=args.language
+            language=args.language,
+            force=args.force
         )
 
     print("\n✨ Pipeline erfolgreich durchgelaufen! Ergebnisse finden sich im Ordner 'data/'.")

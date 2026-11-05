@@ -119,15 +119,15 @@ Erstelle eine fundierte Analyse und antworte im folgenden JSON-Format:
     "Kernaussage 2",
     "Kernaussage 3"
   ],
-  "topics": ["Thema 1", "Thema 2", "Thema 3"],
+  "topics": ["Konkretes Thema 1", "Konkretes Thema 2"],
   "named_entities": {{
-    "persons": ["Person 1", "Person 2"],
-    "organizations": ["Unternehmen / Institut 1"],
-    "tools_and_tech": ["Tool / Software / Buch"]
+    "persons": ["Tatsächlich im Podcast genannte reale Personen (z.B. Jan Böhmermann, Olli Schulz, Gäste)"],
+    "organizations": ["Erwähnte Institutionen, Sender, Unternehmen"],
+    "tools_and_media": ["Erwähnte Bücher, Filme, Songs, Software"]
   }},
   "sentiment_and_tone": {{
     "overall_sentiment": "positiv | neutral | kritisch | gemischt",
-    "tone": "z.B. analytisch, humorvoll, kontrovers, inspirierend",
+    "tone": "z.B. analytisch, humorvoll, satirisch, kontrovers, nachdenklich",
     "explanation": "Kurze Begründung der Stimmung"
   }},
   "actionable_insights": [
@@ -136,7 +136,10 @@ Erstelle eine fundierte Analyse und antworte im folgenden JSON-Format:
   ]
 }}
 
-Antworte ausschließlich mit dem gültigen JSON-Objekt, ohne Markdown-Backticks drumherum.
+WICHTIG:
+- Erfinde keine Platzhalter wie 'Person 1' oder 'Unternehmen 1'.
+- Nenne nur Entitäten, die tatsächlich im Transkript vorkommen. Wenn nichts genannt wurde, gib ein leeres Array [] zurück.
+- Antworte ausschließlich mit dem gültigen JSON-Objekt, ohne Markdown-Backticks drumherum.
 """
 
         try:

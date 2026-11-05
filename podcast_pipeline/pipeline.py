@@ -12,16 +12,22 @@ class PodcastPipeline:
         whisper_model: str = DEFAULT_WHISPER_MODEL,
         ollama_model: str = DEFAULT_OLLAMA_MODEL,
         hf_token: Optional[str] = HF_TOKEN,
+        cpu_threads: int = 8,
     ):
         self.downloader = PodcastDownloader()
-        self.transcriber = AudioTranscriber(model_size=whisper_model, hf_token=hf_token)
+        self.transcriber = AudioTranscriber(
+            model_size=whisper_model,
+            hf_token=hf_token,
+            cpu_threads=cpu_threads
+        )
         self.analyzer = LocalNLPAnalyzer(model_name=ollama_model)
 
     def process_search(
         self,
         query: str,
         limit: int = 1,
-        language: Optional[str] = None
+        language: Optional[str] = None,
+        force: bool = False
     ) -> List[Dict[str, Any]]:
         """Sucht nach einem Podcast-Namen, wählt den ersten Treffer und verarbeitet ihn."""
         print(f"\n🔍 Suche nach Podcast: '{query}'...")
@@ -36,14 +42,16 @@ class PodcastPipeline:
         return self.process_feed(
             feed_url=best_match["feed_url"],
             limit=limit,
-            language=language
+            language=language,
+            force=force
         )
 
     def process_feed(
         self,
         feed_url: str,
         limit: int = 1,
-        language: Optional[str] = None
+        language: Optional[str] = None,
+        force: bool = False
     ) -> List[Dict[str, Any]]:
         """Verarbeitet Episoden aus einem RSS-Feed durch alle 3 Stufen."""
         print(f"\n==========================================")
@@ -59,7 +67,11 @@ class PodcastPipeline:
 
             # Stufe 2: Transkription
             print(f"\n🎧 2. Transkription...")
-            transcript_data = self.transcriber.transcribe(audio_path, language=language)
+            transcript_data = self.transcriber.transcribe(
+                audio_path,
+                language=language,
+                force_recompute=force
+            )
 
             # Optionale Sprecher-Namensauflösung via LLM
             if transcript_data.get("has_diarization"):
@@ -83,11 +95,16 @@ class PodcastPipeline:
         self,
         audio_path: Path,
         title: Optional[str] = None,
-        language: Optional[str] = None
+        language: Optional[str] = None,
+        force: bool = False
     ) -> Dict[str, Any]:
         """Verarbeitet eine bereits lokal vorliegende Audiodatei (Stufe 2 & 3)."""
         print(f"\n🎧 2. Transkription von lokaler Datei: {audio_path.name}...")
-        transcript_data = self.transcriber.transcribe(audio_path, language=language)
+        transcript_data = self.transcriber.transcribe(
+            audio_path,
+            language=language,
+            force_recompute=force
+        )
 
         if transcript_data.get("has_diarization"):
             print(f"\n🗣️ Löse Sprecher-Namen mit LLM auf...")

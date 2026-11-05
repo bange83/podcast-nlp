@@ -1,9 +1,16 @@
 import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
+from tqdm import tqdm
 from faster_whisper import WhisperModel
 
-from .config import TRANSCRIPTS_DIR, DEFAULT_WHISPER_MODEL, DEFAULT_COMPUTE_TYPE, HF_TOKEN
+from .config import (
+    TRANSCRIPTS_DIR,
+    DEFAULT_WHISPER_MODEL,
+    DEFAULT_COMPUTE_TYPE,
+    DEFAULT_CPU_THREADS,
+    HF_TOKEN
+)
 
 
 class AudioTranscriber:
@@ -12,12 +19,14 @@ class AudioTranscriber:
         model_size: str = DEFAULT_WHISPER_MODEL,
         device: str = "cpu",
         compute_type: str = DEFAULT_COMPUTE_TYPE,
+        cpu_threads: int = DEFAULT_CPU_THREADS,
         output_dir: Path = TRANSCRIPTS_DIR,
         hf_token: Optional[str] = HF_TOKEN,
     ):
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
+        self.cpu_threads = cpu_threads
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.hf_token = hf_token
@@ -27,11 +36,13 @@ class AudioTranscriber:
     @property
     def model(self) -> WhisperModel:
         if self._model is None:
-            print(f"[Transcriber] Lade lokales Whisper-Modell '{self.model_size}' auf {self.device} ({self.compute_type})...")
+            print(f"[Transcriber] Lade lokales Whisper-Modell '{self.model_size}' ({self.compute_type}, {self.cpu_threads} CPU-Threads)...")
             self._model = WhisperModel(
                 self.model_size,
                 device=self.device,
-                compute_type=self.compute_type
+                compute_type=self.compute_type,
+                cpu_threads=self.cpu_threads,
+                num_workers=2
             )
         return self._model
 
@@ -127,32 +138,48 @@ class AudioTranscriber:
         detected_lang = info.language
         lang_prob = round(info.language_probability, 3)
         duration = round(info.duration, 2)
-        print(f"[Transcriber] Erkannte Sprache: '{detected_lang}' (Wahrscheinlichkeit: {lang_prob}), Dauer: {duration}s")
+        total_seconds = int(duration)
+        print(f"[Transcriber] Erkannte Sprache: '{detected_lang}' ({lang_prob*100:.1f}%), Gesamtdauer: {total_seconds // 60}m {total_seconds % 60}s")
 
         segments = []
         dialogue_lines = []
+        last_reported_end = 0.0
 
-        for segment in segments_gen:
-            start = round(segment.start, 2)
-            end = round(segment.end, 2)
-            text = segment.text.strip()
+        with tqdm(
+            total=total_seconds,
+            unit="s",
+            desc="[Transcriber] Fortschritt",
+            bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}s [{elapsed}<{remaining}]"
+        ) as pbar:
+            for segment in segments_gen:
+                start = round(segment.start, 2)
+                end = round(segment.end, 2)
+                text = segment.text.strip()
 
-            speaker = self._assign_speaker_to_segment(start, end, diarization)
+                advance = int(end) - int(last_reported_end)
+                if advance > 0:
+                    pbar.update(advance)
+                    last_reported_end = end
 
-            seg_dict = {
-                "id": segment.id,
-                "start": start,
-                "end": end,
-                "speaker": speaker,
-                "text": text
-            }
-            segments.append(seg_dict)
+                speaker = self._assign_speaker_to_segment(start, end, diarization)
 
-            # Formatierte Dialogzeile
-            if speaker != "UNKNOWN":
-                dialogue_lines.append(f"[{start}s - {end}s] {speaker}: {text}")
-            else:
-                dialogue_lines.append(f"[{start}s - {end}s] {text}")
+                seg_dict = {
+                    "id": segment.id,
+                    "start": start,
+                    "end": end,
+                    "speaker": speaker,
+                    "text": text
+                }
+                segments.append(seg_dict)
+
+                # Formatierte Dialogzeile
+                if speaker != "UNKNOWN":
+                    dialogue_lines.append(f"[{start}s - {end}s] {speaker}: {text}")
+                else:
+                    dialogue_lines.append(f"[{start}s - {end}s] {text}")
+
+            if pbar.n < total_seconds:
+                pbar.update(total_seconds - pbar.n)
 
         full_text = "\n".join(dialogue_lines)
 

@@ -17,8 +17,11 @@ REPORTS_DIR = DATA_DIR / "reports"
 DEFAULT_WHISPER_MODEL = "small"
 
 # Whisper Compute Type auf macOS / Apple Silicon:
-# "float16", "int8", "float32"
-DEFAULT_COMPUTE_TYPE = "float32"
+# "int8" nutzt ARM NEON Vektor-Beschleunigung (3-4x schneller auf M1-M4)
+DEFAULT_COMPUTE_TYPE = "int8"
+
+# Anzahl CPU-Threads für CTranslate2 (optimal für M-Serie Macs)
+DEFAULT_CPU_THREADS = 8
 
 # Standard Ollama Modell (passend zu Ihren installierten Modellen)
 DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "dolphin-llama3:8b")
