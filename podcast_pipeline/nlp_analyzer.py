@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import ollama
 
 from .config import REPORTS_DIR, DEFAULT_OLLAMA_MODEL
