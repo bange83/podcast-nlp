@@ -57,7 +57,7 @@ class AudioTranscriber:
                 print("[Transcriber] Lade PyAnnote Speaker Diarization Pipeline von HuggingFace...")
                 pipeline = Pipeline.from_pretrained(
                     "pyannote/speaker-diarization-3.1",
-                    use_auth_token=self.hf_token
+                    token=self.hf_token
                 )
                 if torch.backends.mps.is_available():
                     # Apple Silicon GPU Beschleunigung
@@ -65,7 +65,19 @@ class AudioTranscriber:
                     print("[Transcriber] Diarization läuft beschleunigt auf Apple Silicon (MPS).")
                 self._diarization_pipeline = pipeline
             except Exception as e:
-                print(f"[Transcriber] Hinweis: PyAnnote Diarization konnte nicht initialisiert werden ({e}). Fahre ohne Sprechertrennung fort.")
+                err_str = str(e)
+                print("\n" + "="*70)
+                print(f"[Transcriber] ⚠️ FEHLER BEI DER SPRECHERERKENNUNG (PyAnnote):")
+                if "403" in err_str or "gated" in err_str:
+                    print("Der Hugging Face Token hat noch keinen Zugriff auf alle PyAnnote-Modelle.")
+                    print("Bitte stellen Sie sicher, dass Sie bei Hugging Face eingeloggt sind")
+                    print("und die Nutzungsbedingungen für diese 3 Modelle akzeptiert haben:")
+                    print("  1. 👉 https://huggingface.co/pyannote/speaker-diarization-community-1")
+                    print("  2. 👉 https://huggingface.co/pyannote/speaker-diarization-3.1")
+                    print("  3. 👉 https://huggingface.co/pyannote/segmentation-3.0")
+                else:
+                    print(f"Fehler: {err_str}")
+                print("="*70 + "\n")
                 self._diarization_pipeline = False
         return self._diarization_pipeline if self._diarization_pipeline is not False else None
 
@@ -100,8 +112,26 @@ class AudioTranscriber:
                 speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + duration
 
             if speaker_durations:
-                # Sprecher mit der längsten Redezeit in diesem Intervall
                 return max(speaker_durations, key=speaker_durations.get)
+
+            # Fallback 1: Prüfe den Mittelpunkt des Segments
+            mid_point = (seg_start + seg_end) / 2
+            for turn, _, speaker in diarization.itertracks(yield_label=True):
+                if turn.start <= mid_point <= turn.end:
+                    return speaker
+
+            # Fallback 2: Nächster zeitlicher Sprecher innerhalb von 1 Sekunde
+            closest_speaker = None
+            min_dist = float("inf")
+            for turn, _, speaker in diarization.itertracks(yield_label=True):
+                dist = min(abs(turn.start - seg_end), abs(turn.end - seg_start))
+                if dist < min_dist and dist < 1.5:
+                    min_dist = dist
+                    closest_speaker = speaker
+
+            if closest_speaker:
+                return closest_speaker
+
         except Exception:
             pass
 
