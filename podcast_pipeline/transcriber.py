@@ -82,15 +82,44 @@ class AudioTranscriber:
         return self._diarization_pipeline if self._diarization_pipeline is not False else None
 
     def _run_diarization(self, audio_path: Path):
-        """Führt Sprechererkennung auf der Audiodatei durch."""
+        """Führt Sprechererkennung auf der Audiodatei durch und cacht das RTTM-Ergebnis."""
+        rttm_path = self.output_dir / f"{audio_path.stem}.rttm"
+        if rttm_path.exists():
+            try:
+                from pyannote.core import Annotation, Segment
+                annotation = Annotation(uri=audio_path.name)
+                with open(rttm_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        parts = line.strip().split()
+                        if len(parts) >= 8 and parts[0] == "SPEAKER":
+                            start = float(parts[3])
+                            dur = float(parts[4])
+                            spk = parts[7]
+                            annotation[Segment(start, start + dur)] = spk
+                print(f"[Transcriber] Lade gecachte Sprechererkennung: {rttm_path.name}")
+                return annotation
+            except Exception as e:
+                print(f"[Transcriber] Konnte RTTM nicht laden ({e}), rechne neu...")
+
         pipeline = self._get_diarization_pipeline()
         if not pipeline:
             return None
 
         print(f"[Transcriber] Führe Sprechertrennung (Diarization) für {audio_path.name} durch...")
         try:
-            diarization = pipeline(str(audio_path))
-            return diarization
+            res = pipeline(str(audio_path))
+            # PyAnnote 3.1+ gibt DiarizeOutput zurück
+            annotation = getattr(res, "speaker_diarization", res)
+
+            # Als RTTM für sofortige Wiederverwendung speichern
+            try:
+                with open(rttm_path, "w", encoding="utf-8") as f:
+                    annotation.write_rttm(f)
+                print(f"[Transcriber] Diarization-Cache gespeichert: {rttm_path.name}")
+            except Exception:
+                pass
+
+            return annotation
         except Exception as e:
             print(f"[Transcriber] Fehler bei Diarization: {e}")
             return None
@@ -102,6 +131,8 @@ class AudioTranscriber:
             return "UNKNOWN"
 
         try:
+            # Falls noch DiarizeOutput übergeben wurde:
+            diarization = getattr(diarization, "speaker_diarization", diarization)
             from pyannote.core import Segment
             segment = Segment(seg_start, seg_end)
             cropped = diarization.crop(segment)
@@ -152,8 +183,11 @@ class AudioTranscriber:
             with open(json_path, "r", encoding="utf-8") as f:
                 existing_data = json.load(f)
 
-            # Wenn das Transkript bereits da ist, aber noch keine Sprecher hat:
-            if not existing_data.get("has_diarization") and self.hf_token:
+            # Wenn das Transkript bereits da ist, aber noch keine echten Sprecher hat:
+            speakers = {s.get("speaker") for s in existing_data.get("segments", []) if s.get("speaker")}
+            needs_diarization = (not existing_data.get("has_diarization")) or (speakers == {"UNKNOWN"}) or ("UNKNOWN" in speakers and len(speakers) == 1)
+
+            if needs_diarization and self.hf_token:
                 print(f"[Transcriber] ✨ Nutze bestehendes Whisper-Transkript ({json_path.name})!")
                 print("[Transcriber] Starte nur die fehlende Sprechererkennung (Diarization)...")
                 diarization = self._run_diarization(audio_path)
