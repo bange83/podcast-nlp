@@ -21,34 +21,45 @@ class LocalNLPAnalyzer:
         transcript_data: Dict[str, Any],
         candidate_hosts: Optional[List[str]] = None
     ) -> Dict[str, Any]:
-        """Versucht via lokalem LLM generische Sprecher-IDs (SPEAKER_00 etc.) echten Namen zuzuordnen."""
+        """Versucht via lokalem LLM generische Sprecher-IDs (SPEAKER_07 etc.) echten Namen zuzuordnen."""
         segments = transcript_data.get("segments", [])
-        speakers = {s.get("speaker") for s in segments if s.get("speaker") and s.get("speaker") != "UNKNOWN"}
-        if len(speakers) < 2:
+
+        # Häufigkeiten der Sprecher ermitteln
+        counts = {}
+        for s in segments:
+            spk = s.get("speaker")
+            if spk and spk != "UNKNOWN":
+                counts[spk] = counts.get(spk, 0) + 1
+
+        if len(counts) < 2:
             return transcript_data
 
-        # Die ersten ~30 Segmente für die Identifikation nutzen
+        # Die 2 dominantesten Sprecher finden (z.B. Jan & Olli)
+        top_speakers = [spk for spk, _ in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:2]]
+
+        # Ausschnitt finden, in dem diese beiden tatsächlich miteinander reden (Werbung überspringen)
         sample_dialogue = []
-        for s in segments[:35]:
-            spk = s.get("speaker", "UNKNOWN")
-            sample_dialogue.append(f"{spk}: {s.get('text')}")
+        for s in segments:
+            spk = s.get("speaker")
+            if spk in top_speakers:
+                sample_dialogue.append(f"{spk}: {s.get('text')}")
+            if len(sample_dialogue) >= 40:
+                break
+
         sample_text = "\n".join(sample_dialogue)
 
-        hosts_hint = f"Mögliche Hosts/Gäste: {', '.join(candidate_hosts)}" if candidate_hosts else "Z.B. Jan Böhmermann, Olli Schulz bei Fest & Flauschig."
+        hosts_hint = f"Mögliche Personen: {', '.join(candidate_hosts)}" if candidate_hosts else "Z.B. Jan Böhmermann, Olli Schulz bei Fest & Flauschig."
 
-        prompt = f"""Hier ist der Beginn eines Podcast-Dialogs mit generischen Sprecher-IDs:
+        prompt = f"""Hier ist ein Dialog aus einem Podcast zwischen den beiden Hauptsprechern ({', '.join(top_speakers)}):
 
 {sample_text}
 
-Aufgabe: Ordne den Sprecher-IDs ({', '.join(speakers)}) die echten Namen der Personen zu, basierend darauf wie sie sich begrüßen oder anreden.
-{hosts_hint}
+Aufgabe: Ordne den beiden Sprecher-IDs ({', '.join(top_speakers)}) die echten Namen der Personen zu ({hosts_hint}), basierend darauf wie sie sprechen und worüber sie reden.
 
 Antworte ausschließlich im JSON-Format:
 {{
-  "mapping": {{
-    "SPEAKER_00": "Name der Person oder Unbekannt",
-    "SPEAKER_01": "Name der Person oder Unbekannt"
-  }}
+  "{top_speakers[0]}": "Name der Person",
+  "{top_speakers[1]}": "Name der Person"
 }}
 """
         try:
@@ -60,11 +71,9 @@ Antworte ausschließlich im JSON-Format:
             raw = resp["message"]["content"].strip()
             if "{" in raw and "}" in raw:
                 raw_json = raw[raw.find("{"):raw.rfind("}")+1]
-                data = json.loads(raw_json)
-                mapping = data.get("mapping", {})
+                mapping = json.loads(raw_json)
                 if mapping:
                     print(f"[NLPAnalyzer] Erkannte Sprecher-Zuordnung: {mapping}")
-                    # Namen in den Segmenten und full_text ersetzen
                     new_segments = []
                     new_text_lines = []
                     for s in segments:
@@ -72,7 +81,10 @@ Antworte ausschließlich im JSON-Format:
                         real_name = mapping.get(orig_spk, orig_spk)
                         s["speaker"] = real_name
                         new_segments.append(s)
-                        new_text_lines.append(f"[{s['start']}s - {s['end']}s] {real_name}: {s['text']}")
+                        if real_name != "UNKNOWN":
+                            new_text_lines.append(f"[{s['start']}s - {s['end']}s] {real_name}: {s['text']}")
+                        else:
+                            new_text_lines.append(f"[{s['start']}s - {s['end']}s] {s['text']}")
 
                     transcript_data["segments"] = new_segments
                     transcript_data["full_text"] = "\n".join(new_text_lines)
