@@ -1,0 +1,171 @@
+import json
+from pathlib import Path
+from typing import Dict, Any, Optional
+import ollama
+
+from .config import REPORTS_DIR, DEFAULT_OLLAMA_MODEL
+
+
+class LocalNLPAnalyzer:
+    def __init__(
+        self,
+        model_name: str = DEFAULT_OLLAMA_MODEL,
+        output_dir: Path = REPORTS_DIR,
+    ):
+        self.model_name = model_name
+        self.output_dir = output_dir
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def analyze_transcript(
+        self,
+        transcript_data: Dict[str, Any],
+        title: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Führt umfassende NLP-Analysen auf dem Transkript mittels lokalem LLM durch."""
+        text = transcript_data.get("full_text", "")
+        file_stem = Path(transcript_data.get("audio_file", "podcast")).stem
+        episode_title = title or file_stem
+
+        print(f"[NLPAnalyzer] Starte Analyse mit lokalem LLM '{self.model_name}'...")
+
+        # System Prompt für präzise, strukturierte Analyse
+        system_prompt = (
+            "Du bist ein fortschrittlicher NLP- und Podcast-Analyst. "
+            "Deine Aufgabe ist es, gesprochene Podcast-Transkripte zu analysieren und "
+            "eine strukturierte, präzise Zusammenfassung mit Kernerkenntnissen zu liefern. "
+            "Antworte immer auf Deutsch, es sei denn, das Transkript erfordert zwingend eine andere Sprache."
+        )
+
+        user_prompt = f"""Hier ist das Transkript einer Podcast-Folge:
+Titel: {episode_title}
+
+--- TRANSKRIPT ANFANG ---
+{text[:24000]}  # Begrenzung für Standard-Kontextfenster
+--- TRANSKRIPT ENDE ---
+
+Erstelle eine fundierte Analyse und antworte im folgenden JSON-Format:
+{{
+  "title": "{episode_title}",
+  "one_sentence_summary": "Eine prägnante einzeilige Kernaussage der Folge",
+  "detailed_summary": "Ausführliche Zusammenfassung der Hauptargumente und Diskussionen (3-5 Absätze)",
+  "key_takeaways": [
+    "Kernaussage 1",
+    "Kernaussage 2",
+    "Kernaussage 3"
+  ],
+  "topics": ["Thema 1", "Thema 2", "Thema 3"],
+  "named_entities": {{
+    "persons": ["Person 1", "Person 2"],
+    "organizations": ["Unternehmen / Institut 1"],
+    "tools_and_tech": ["Tool / Software / Buch"]
+  }},
+  "sentiment_and_tone": {{
+    "overall_sentiment": "positiv | neutral | kritisch | gemischt",
+    "tone": "z.B. analytisch, humorvoll, kontrovers, inspirierend",
+    "explanation": "Kurze Begründung der Stimmung"
+  }},
+  "actionable_insights": [
+    "Konkreter Praxistipp oder Denkanstoß 1",
+    "Konkreter Praxistipp 2"
+  ]
+}}
+
+Antworte ausschließlich mit dem gültigen JSON-Objekt, ohne Markdown-Backticks drumherum.
+"""
+
+        try:
+            response = ollama.chat(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                options={"temperature": 0.3}
+            )
+
+            raw_content = response["message"]["content"].strip()
+
+            # Bereinigen falls das Modell Markdown-Codeblöcke mitliefert
+            if raw_content.startswith("```"):
+                lines = raw_content.splitlines()
+                if lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].startswith("```"):
+                    lines = lines[:-1]
+                raw_content = "\n".join(lines).strip()
+
+            try:
+                analysis_result = json.loads(raw_content)
+            except json.JSONDecodeError:
+                analysis_result = {
+                    "title": episode_title,
+                    "raw_analysis": raw_content
+                }
+
+        except Exception as e:
+            print(f"[NLPAnalyzer] Fehler bei der Ollama-Anfrage: {e}")
+            raise
+
+        # Speichern als JSON
+        json_report_path = self.output_dir / f"{file_stem}_analysis.json"
+        with open(json_report_path, "w", encoding="utf-8") as f:
+            json.dump(analysis_result, f, ensure_ascii=False, indent=2)
+
+        # Zusätzlich als schöner Markdown-Report speichern
+        md_report_path = self.output_dir / f"{file_stem}_report.md"
+        self._save_markdown_report(analysis_result, md_report_path)
+
+        print(f"[NLPAnalyzer] Analyse abgeschlossen! Gespeichert unter:\n  -> {json_report_path}\n  -> {md_report_path}")
+        return analysis_result
+
+    def _save_markdown_report(self, data: Dict[str, Any], path: Path) -> None:
+        """Erzeugt einen ansprechenden Markdown-Bericht aus den Analyseergebnissen."""
+        md = []
+        md.append(f"# Podcast-Analyse: {data.get('title', 'Episode')}\n")
+
+        if "one_sentence_summary" in data:
+            md.append(f"> **TL;DR:** {data['one_sentence_summary']}\n")
+
+        if "detailed_summary" in data:
+            md.append("## 📝 Zusammenfassung")
+            md.append(data["detailed_summary"] + "\n")
+
+        if "key_takeaways" in data and data["key_takeaways"]:
+            md.append("## 💡 Wichtigste Kernaussagen")
+            for item in data["key_takeaways"]:
+                md.append(f"- {item}")
+            md.append("")
+
+        if "topics" in data and data["topics"]:
+            md.append("## 🏷️ Themen")
+            md.append(", ".join(f"`{t}`" for t in data["topics"]) + "\n")
+
+        if "named_entities" in data and isinstance(data["named_entities"], dict):
+            md.append("## 🔍 Erwähnte Entitäten")
+            for category, items in data["named_entities"].items():
+                if items:
+                    cat_name = category.replace("_", " ").title()
+                    md.append(f"- **{cat_name}:** {', '.join(items)}")
+            md.append("")
+
+        if "sentiment_and_tone" in data and isinstance(data["sentiment_and_tone"], dict):
+            st = data["sentiment_and_tone"]
+            md.append("## 📊 Tonalität & Sentiment")
+            md.append(f"- **Stimmung:** {st.get('overall_sentiment', '-')}")
+            md.append(f"- **Tonfall:** {st.get('tone', '-')}")
+            if "explanation" in st:
+                md.append(f"- **Begründung:** {st['explanation']}")
+            md.append("")
+
+        if "actionable_insights" in data and data["actionable_insights"]:
+            md.append("## 🚀 Erkenntnisse & Praxistipps")
+            for item in data["actionable_insights"]:
+                md.append(f"- {item}")
+            md.append("")
+
+        if "raw_analysis" in data:
+            md.append("## Analyseergebnis (Rohdaten)")
+            md.append(data["raw_analysis"])
+
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(md))

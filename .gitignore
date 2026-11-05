@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Project Data (audio files, transcripts, generated reports)
+data/audio/*
+!data/audio/.gitkeep
+data/transcripts/*
+!data/transcripts/.gitkeep
+data/reports/*
+!data/reports/.gitkeep
+
+# Models / Cache
+models/
+huggingface/
+.cache/
+
+# OS and Editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
