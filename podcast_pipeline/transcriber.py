@@ -29,7 +29,7 @@ class AudioTranscriber:
         self.cpu_threads = cpu_threads
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.hf_token = hf_token
+        self.hf_token = hf_token or HF_TOKEN
         self._model: Optional[WhisperModel] = None
         self._diarization_pipeline = None
 

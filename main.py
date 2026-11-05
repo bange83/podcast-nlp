@@ -2,7 +2,7 @@
 import argparse
 from pathlib import Path
 from podcast_pipeline.pipeline import PodcastPipeline
-from podcast_pipeline.config import DEFAULT_WHISPER_MODEL, DEFAULT_OLLAMA_MODEL
+from podcast_pipeline.config import DEFAULT_WHISPER_MODEL, DEFAULT_OLLAMA_MODEL, HF_TOKEN
 
 
 def main():
@@ -53,8 +53,8 @@ def main():
     parser.add_argument(
         "--hf-token",
         type=str,
-        default=None,
-        help="Hugging Face User Access Token für PyAnnote Sprechertrennung (kann auch in .env definiert werden)"
+        default=HF_TOKEN,
+        help="Hugging Face User Access Token für PyAnnote Sprechertrennung (Standard: aus .env)"
     )
     parser.add_argument(
         "--threads", "-t",

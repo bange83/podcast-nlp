@@ -15,9 +15,10 @@ class PodcastPipeline:
         cpu_threads: int = 8,
     ):
         self.downloader = PodcastDownloader()
+        token = hf_token or HF_TOKEN
         self.transcriber = AudioTranscriber(
             model_size=whisper_model,
-            hf_token=hf_token,
+            hf_token=token,
             cpu_threads=cpu_threads
         )
         self.analyzer = LocalNLPAnalyzer(model_name=ollama_model)
