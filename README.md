@@ -67,18 +67,27 @@ Für die Sprechererkennung (`pyannote.audio`) wird ein kostenloser Hugging Face 
 
 ---
 
-## Installation
+## Installation & Ausführung mit uv (Empfohlen)
 
-1. Virtuelle Umgebung erstellen und aktivieren:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
+Mit [`uv`](https://docs.astral.sh/uv/) geht die Einrichtung blitzschnell und ohne Abhängigkeitskonflikte (nutzt automatisch die passende Python 3.11/3.12 Version mit vorkompilierten PyTorch/Whisper-Wheels):
 
-2. Abhängigkeiten installieren:
-   ```bash
-   pip install -r requirements.txt
-   ```
+```bash
+cd /Volumes/Samsung990/git/podcast-nlp
+
+# 1. Virtuelle Umgebung anlegen & Abhängigkeiten synchronisieren
+uv sync
+
+# 2. Pipeline direkt über uv ausführen:
+uv run main.py --search "Fest & Flauschig" --limit 1
+```
+
+Alternativ klassisch mit venv:
+```bash
+uv venv --python 3.12
+source .venv/bin/activate
+uv pip install -r requirements.txt
+python3 main.py --search "Fest & Flauschig" --limit 1
+```
 
 ---
 

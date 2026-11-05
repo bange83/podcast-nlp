@@ -1,0 +1,23 @@
+[project]
+name = "podcast-nlp"
+version = "0.1.0"
+description = "Podcast NLP Pipeline: Download, Transkription & lokale NLP-Analysen"
+readme = "README.md"
+requires-python = ">=3.11, <3.13"
+dependencies = [
+    "feedparser>=6.0.11",
+    "requests>=2.32.0",
+    "tqdm>=4.66.0",
+    "python-slugify>=8.0.4",
+    "python-dotenv>=1.0.0",
+    "faster-whisper>=1.0.0",
+    "torch>=2.2.0",
+    "pyannote-audio>=3.1.1",
+    "ollama>=0.4.0",
+    "pydantic>=2.7.0",
+    "rich>=13.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
