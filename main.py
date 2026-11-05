@@ -50,12 +50,19 @@ def main():
         default=None,
         help="Sprachcode für Whisper erzwingen (z.B. 'de' oder 'en'). Wenn weggelassen, automatische Erkennung."
     )
+    parser.add_argument(
+        "--hf-token",
+        type=str,
+        default=None,
+        help="Hugging Face User Access Token für PyAnnote Sprechertrennung (kann auch in .env definiert werden)"
+    )
 
     args = parser.parse_args()
 
     pipeline = PodcastPipeline(
         whisper_model=args.whisper_model,
-        ollama_model=args.llm_model
+        ollama_model=args.llm_model,
+        hf_token=args.hf_token
     )
 
     if args.feed:

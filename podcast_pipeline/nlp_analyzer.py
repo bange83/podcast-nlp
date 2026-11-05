@@ -16,6 +16,72 @@ class LocalNLPAnalyzer:
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+    def map_speaker_names(
+        self,
+        transcript_data: Dict[str, Any],
+        candidate_hosts: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Versucht via lokalem LLM generische Sprecher-IDs (SPEAKER_00 etc.) echten Namen zuzuordnen."""
+        segments = transcript_data.get("segments", [])
+        speakers = {s.get("speaker") for s in segments if s.get("speaker") and s.get("speaker") != "UNKNOWN"}
+        if len(speakers) < 2:
+            return transcript_data
+
+        # Die ersten ~30 Segmente für die Identifikation nutzen
+        sample_dialogue = []
+        for s in segments[:35]:
+            spk = s.get("speaker", "UNKNOWN")
+            sample_dialogue.append(f"{spk}: {s.get('text')}")
+        sample_text = "\n".join(sample_dialogue)
+
+        hosts_hint = f"Mögliche Hosts/Gäste: {', '.join(candidate_hosts)}" if candidate_hosts else "Z.B. Jan Böhmermann, Olli Schulz bei Fest & Flauschig."
+
+        prompt = f"""Hier ist der Beginn eines Podcast-Dialogs mit generischen Sprecher-IDs:
+
+{sample_text}
+
+Aufgabe: Ordne den Sprecher-IDs ({', '.join(speakers)}) die echten Namen der Personen zu, basierend darauf wie sie sich begrüßen oder anreden.
+{hosts_hint}
+
+Antworte ausschließlich im JSON-Format:
+{{
+  "mapping": {{
+    "SPEAKER_00": "Name der Person oder Unbekannt",
+    "SPEAKER_01": "Name der Person oder Unbekannt"
+  }}
+}}
+"""
+        try:
+            resp = ollama.chat(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0.1}
+            )
+            raw = resp["message"]["content"].strip()
+            if "{" in raw and "}" in raw:
+                raw_json = raw[raw.find("{"):raw.rfind("}")+1]
+                data = json.loads(raw_json)
+                mapping = data.get("mapping", {})
+                if mapping:
+                    print(f"[NLPAnalyzer] Erkannte Sprecher-Zuordnung: {mapping}")
+                    # Namen in den Segmenten und full_text ersetzen
+                    new_segments = []
+                    new_text_lines = []
+                    for s in segments:
+                        orig_spk = s.get("speaker")
+                        real_name = mapping.get(orig_spk, orig_spk)
+                        s["speaker"] = real_name
+                        new_segments.append(s)
+                        new_text_lines.append(f"[{s['start']}s - {s['end']}s] {real_name}: {s['text']}")
+
+                    transcript_data["segments"] = new_segments
+                    transcript_data["full_text"] = "\n".join(new_text_lines)
+                    transcript_data["speaker_mapping"] = mapping
+        except Exception as e:
+            print(f"[NLPAnalyzer] Konnte Sprecher nicht automatisch auflösen: {e}")
+
+        return transcript_data
+
     def analyze_transcript(
         self,
         transcript_data: Dict[str, Any],

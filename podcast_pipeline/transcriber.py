@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from faster_whisper import WhisperModel
 
-from .config import TRANSCRIPTS_DIR, DEFAULT_WHISPER_MODEL, DEFAULT_COMPUTE_TYPE
+from .config import TRANSCRIPTS_DIR, DEFAULT_WHISPER_MODEL, DEFAULT_COMPUTE_TYPE, HF_TOKEN
 
 
 class AudioTranscriber:
@@ -13,13 +13,16 @@ class AudioTranscriber:
         device: str = "cpu",
         compute_type: str = DEFAULT_COMPUTE_TYPE,
         output_dir: Path = TRANSCRIPTS_DIR,
+        hf_token: Optional[str] = HF_TOKEN,
     ):
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.hf_token = hf_token
         self._model: Optional[WhisperModel] = None
+        self._diarization_pipeline = None
 
     @property
     def model(self) -> WhisperModel:
@@ -32,13 +35,74 @@ class AudioTranscriber:
             )
         return self._model
 
+    def _get_diarization_pipeline(self):
+        """Initialisiert die PyAnnote Diarization Pipeline via HuggingFace."""
+        if not self.hf_token:
+            return None
+        if self._diarization_pipeline is None:
+            try:
+                import torch
+                from pyannote.audio import Pipeline
+                print("[Transcriber] Lade PyAnnote Speaker Diarization Pipeline von HuggingFace...")
+                pipeline = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    use_auth_token=self.hf_token
+                )
+                if torch.backends.mps.is_available():
+                    # Apple Silicon GPU Beschleunigung
+                    pipeline.to(torch.device("mps"))
+                    print("[Transcriber] Diarization läuft beschleunigt auf Apple Silicon (MPS).")
+                self._diarization_pipeline = pipeline
+            except Exception as e:
+                print(f"[Transcriber] Hinweis: PyAnnote Diarization konnte nicht initialisiert werden ({e}). Fahre ohne Sprechertrennung fort.")
+                self._diarization_pipeline = False
+        return self._diarization_pipeline if self._diarization_pipeline is not False else None
+
+    def _run_diarization(self, audio_path: Path):
+        """Führt Sprechererkennung auf der Audiodatei durch."""
+        pipeline = self._get_diarization_pipeline()
+        if not pipeline:
+            return None
+
+        print(f"[Transcriber] Führe Sprechertrennung (Diarization) für {audio_path.name} durch...")
+        try:
+            diarization = pipeline(str(audio_path))
+            return diarization
+        except Exception as e:
+            print(f"[Transcriber] Fehler bei Diarization: {e}")
+            return None
+
+    @staticmethod
+    def _assign_speaker_to_segment(seg_start: float, seg_end: float, diarization) -> str:
+        """Findet den dominanten Sprecher für einen gegebenen Zeitbereich."""
+        if not diarization:
+            return "UNKNOWN"
+
+        try:
+            from pyannote.core import Segment
+            segment = Segment(seg_start, seg_end)
+            cropped = diarization.crop(segment)
+
+            speaker_durations = {}
+            for turn, _, speaker in cropped.itertracks(yield_label=True):
+                duration = turn.length
+                speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + duration
+
+            if speaker_durations:
+                # Sprecher mit der längsten Redezeit in diesem Intervall
+                return max(speaker_durations, key=speaker_durations.get)
+        except Exception:
+            pass
+
+        return "UNKNOWN"
+
     def transcribe(
         self,
         audio_path: Path,
         language: Optional[str] = None,
         force_recompute: bool = False
     ) -> Dict[str, Any]:
-        """Transkribiert eine Audiodatei und speichert Text + Zeitstempel als JSON und TXT ab."""
+        """Transkribiert eine Audiodatei und ordnet optional Sprecher (Jan vs Olli) zu."""
         stem = audio_path.stem
         json_path = self.output_dir / f"{stem}.json"
         txt_path = self.output_dir / f"{stem}.txt"
@@ -48,12 +112,16 @@ class AudioTranscriber:
             with open(json_path, "r", encoding="utf-8") as f:
                 return json.load(f)
 
+        # 1. Optionale Diarization (Sprechererkennung)
+        diarization = self._run_diarization(audio_path)
+
+        # 2. Whisper Transkription
         print(f"[Transcriber] Starte Transkription von: {audio_path.name}")
         segments_gen, info = self.model.transcribe(
             str(audio_path),
             language=language,
             beam_size=5,
-            vad_filter=True  # Filtert Stille heraus für schnellere Verarbeitung
+            vad_filter=True
         )
 
         detected_lang = info.language
@@ -62,34 +130,47 @@ class AudioTranscriber:
         print(f"[Transcriber] Erkannte Sprache: '{detected_lang}' (Wahrscheinlichkeit: {lang_prob}), Dauer: {duration}s")
 
         segments = []
-        full_text_parts = []
+        dialogue_lines = []
 
         for segment in segments_gen:
+            start = round(segment.start, 2)
+            end = round(segment.end, 2)
+            text = segment.text.strip()
+
+            speaker = self._assign_speaker_to_segment(start, end, diarization)
+
             seg_dict = {
                 "id": segment.id,
-                "start": round(segment.start, 2),
-                "end": round(segment.end, 2),
-                "text": segment.text.strip()
+                "start": start,
+                "end": end,
+                "speaker": speaker,
+                "text": text
             }
             segments.append(seg_dict)
-            full_text_parts.append(segment.text.strip())
 
-        full_text = " ".join(full_text_parts)
+            # Formatierte Dialogzeile
+            if speaker != "UNKNOWN":
+                dialogue_lines.append(f"[{start}s - {end}s] {speaker}: {text}")
+            else:
+                dialogue_lines.append(f"[{start}s - {end}s] {text}")
+
+        full_text = "\n".join(dialogue_lines)
 
         result_data = {
             "audio_file": audio_path.name,
             "language": detected_lang,
             "language_probability": lang_prob,
             "duration_seconds": duration,
+            "has_diarization": diarization is not None,
             "full_text": full_text,
             "segments": segments
         }
 
-        # Speichern als JSON (strukturiert mit Timestamps)
+        # Speichern als JSON
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(result_data, f, ensure_ascii=False, indent=2)
 
-        # Speichern als reine Textdatei (Lesbarkeit)
+        # Speichern als Textdatei
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write(full_text)
 

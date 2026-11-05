@@ -5,8 +5,8 @@ Eine rein lokale Python-Pipeline zum Herunterladen von Podcasts, Transkribieren 
 ## Highlights
 - **100% Lokal & Privat:** Keine Audiodaten oder Transkripte verlassen Ihren Rechner.
 - **Schritt 1: Download:** Automatischer Abruf der neuesten Episoden aus RSS-Feeds inklusive Fortschrittsanzeige.
-- **Schritt 2: Transkription:** Lokales Speech-to-Text mittels `faster-whisper` (CTranslate2) inklusive Zeitstempel-Segmentierung und VAD (Voice Activity Detection).
-- **Schritt 3: Lokale NLP-Analyse:** Extrahieren von Zusammenfassungen, Key Takeaways, Themen, Entitäten (NER) und Tonalität/Sentiment über lokale Modelle in [Ollama](https://ollama.com/) (z.B. `llama3.2`, `qwen2.5`, `mistral`).
+- **Schritt 2: Transkription & Sprechererkennung:** Lokales Speech-to-Text mittels `faster-whisper` (CTranslate2) inklusive Zeitstempel-Segmentierung und optionaler Sprecher-Diarization (Sprechertrennung Jan vs. Olli) via `pyannote.audio`.
+- **Schritt 3: Lokale NLP-Analyse:** Extrahieren von Zusammenfassungen, Key Takeaways, Themen, Entitäten (NER) und Tonalität/Sentiment über lokale Modelle in [Ollama](https://ollama.com/) (Standard: `dolphin-llama3:8b`). Erkennt automatisch die echten Namen der Sprecher aus dem Dialog.
 - **Reports:** Ausgabe sowohl als maschinenlesbares JSON als auch als lesbarer Markdown-Report.
 
 ---
@@ -46,6 +46,24 @@ podcast-nlp/
   # Gewünschtes Modell herunterladen:
   ollama pull llama3.2
   ```
+
+---
+
+## Sprechererkennung einrichten (Optional, für Jan vs. Olli)
+
+Für die Sprechererkennung (`pyannote.audio`) wird ein kostenloser Hugging Face Account benötigt:
+1. Registrieren bei [huggingface.co](https://huggingface.co/)
+2. Nutzungsbedingungen dieser beiden Modelle mit einem Klick akzeptieren:
+   - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+   - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+3. Access Token generieren unter [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (Read-Rechte).
+4. Eine Datei `.env` im Projektordner anlegen (Vorlage `.env.example`):
+   ```bash
+   cp .env.example .env
+   ```
+   und dort `HF_TOKEN=hf_...` eintragen.
+
+*Hinweis: Wenn kein Token eingetragen ist, läuft die Transkription ganz normal ohne Sprechertrennung weiter.*
 
 ---
 

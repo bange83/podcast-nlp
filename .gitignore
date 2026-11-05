@@ -21,6 +21,8 @@ data/reports/*
 models/
 huggingface/
 .cache/
+.env
+.env.local
 
 # OS and Editor
 .DS_Store

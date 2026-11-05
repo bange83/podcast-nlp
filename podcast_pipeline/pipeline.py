@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from .config import DEFAULT_WHISPER_MODEL, DEFAULT_OLLAMA_MODEL
+from .config import DEFAULT_WHISPER_MODEL, DEFAULT_OLLAMA_MODEL, HF_TOKEN
 from .downloader import PodcastDownloader, PodcastEpisode
 from .transcriber import AudioTranscriber
 from .nlp_analyzer import LocalNLPAnalyzer
@@ -11,9 +11,10 @@ class PodcastPipeline:
         self,
         whisper_model: str = DEFAULT_WHISPER_MODEL,
         ollama_model: str = DEFAULT_OLLAMA_MODEL,
+        hf_token: Optional[str] = HF_TOKEN,
     ):
         self.downloader = PodcastDownloader()
-        self.transcriber = AudioTranscriber(model_size=whisper_model)
+        self.transcriber = AudioTranscriber(model_size=whisper_model, hf_token=hf_token)
         self.analyzer = LocalNLPAnalyzer(model_name=ollama_model)
 
     def process_search(
@@ -60,6 +61,11 @@ class PodcastPipeline:
             print(f"\n🎧 2. Transkription...")
             transcript_data = self.transcriber.transcribe(audio_path, language=language)
 
+            # Optionale Sprecher-Namensauflösung via LLM
+            if transcript_data.get("has_diarization"):
+                print(f"\n🗣️ Löse Sprecher-Namen mit LLM auf...")
+                transcript_data = self.analyzer.map_speaker_names(transcript_data)
+
             # Stufe 3: NLP Analyse
             print(f"\n🧠 3. NLP-Analyse mit lokalem LLM...")
             analysis_data = self.analyzer.analyze_transcript(transcript_data, title=ep.title)
@@ -82,6 +88,10 @@ class PodcastPipeline:
         """Verarbeitet eine bereits lokal vorliegende Audiodatei (Stufe 2 & 3)."""
         print(f"\n🎧 2. Transkription von lokaler Datei: {audio_path.name}...")
         transcript_data = self.transcriber.transcribe(audio_path, language=language)
+
+        if transcript_data.get("has_diarization"):
+            print(f"\n🗣️ Löse Sprecher-Namen mit LLM auf...")
+            transcript_data = self.analyzer.map_speaker_names(transcript_data)
 
         print(f"\n🧠 3. NLP-Analyse mit lokalem LLM...")
         analysis_data = self.analyzer.analyze_transcript(transcript_data, title=title or audio_path.stem)

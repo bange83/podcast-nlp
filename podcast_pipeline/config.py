@@ -1,4 +1,9 @@
+import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Lädt Umgebungsvariablen aus .env (z.B. HF_TOKEN)
+load_dotenv()
 
 # Basis-Pfade
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -15,5 +20,9 @@ DEFAULT_WHISPER_MODEL = "small"
 # "float16", "int8", "float32"
 DEFAULT_COMPUTE_TYPE = "float32"
 
-# Ollama Modell für NLP-Analysen (z.B. "llama3.2", "mistral", "qwen2.5:7b")
-DEFAULT_OLLAMA_MODEL = "llama3.2"
+# Standard Ollama Modell (passend zu Ihren installierten Modellen)
+DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "dolphin-llama3:8b")
+
+# Hugging Face Token für PyAnnote Speaker Diarization (optional)
+HF_TOKEN = os.getenv("HF_TOKEN")
+
