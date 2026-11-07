@@ -101,44 +101,54 @@ python3 main.py --search "Fest & Flauschig" --limit 1
 
 ## Benutzung
 
-### 1. Podcast per Name suchen & analysieren
+Das Skript ist modular aufgebaut: Sie können die drei Phasen (Download, Transkription, NLP-Analyse) komplett getrennt voneinander oder in einem Rutsch ausführen.
 
-Einfach nach dem Namen suchen (nutzt das offene Apple-Podcasts-Verzeichnis):
+### 1. Schritt: Episoden herunterladen (`download`)
+Lädt z. B. mehrere Episoden im Hintergrund herunter und speichert Audio-Dateien sowie deren Metadaten in `data/audio/`:
 
 ```bash
-python3 main.py --search "Fest & Flauschig" --limit 1
+# Nach Podcast-Namen suchen und die neuesten 3 Episoden herunterladen:
+python3 main.py download --search "Fest & Flauschig" --limit 3
+
+# Oder direkt per RSS-Feed:
+python3 main.py download --feed "https://feeds.megaphone.fm/GLT4060321204" --limit 5
 ```
 
-### 2. Podcast direkt per RSS-Feed analysieren
-
-Die neueste Episode eines Feeds verarbeiten:
+### 2. Schritt: Transkription & Sprechererkennung (`transcribe`)
+Verarbeitet alle heruntergeladenen Audio-Dateien in `data/audio/`, die noch kein Transkript haben (Batch-Modus):
 
 ```bash
-python3 main.py --feed "https://feeds.megaphone.fm/GLT4060321204" --limit 1
+# Alle noch nicht transkribierten Episoden im Batch abarbeiten:
+python3 main.py transcribe
+
+# Oder gezielt eine einzelne Datei:
+python3 main.py transcribe --file data/audio/meine_aufnahme.mp3
+
+# Mit angepasster Modellgröße oder Threads:
+python3 main.py transcribe --whisper-model medium --threads 8
 ```
 
-Die letzten 3 Episoden verarbeiten:
+### 3. Schritt: LLM-Analyse & Reports (`analyze`)
+Liest die Transkripte aus `data/transcripts/`, ordnet Sprechernamen zu und erzeugt strukturierte Markdown- & JSON-Reports in `data/reports/`:
 
 ```bash
-python3 main.py --feed "https://feeds.megaphone.fm/GLT4060321204" --limit 3
+# Alle Transkripte analysieren, die noch keinen Report haben:
+python3 main.py analyze
+
+# Mit einem anderen lokalen Ollama-Modell:
+python3 main.py analyze --model llama3.2
+
+# Nur eine bestimmte Transkript-Datei analysieren:
+python3 main.py analyze --file data/transcripts/meine_episode.json
 ```
 
-### 3. Eine bestehende lokale Audiodatei analysieren
+---
+
+### Alternative: Alles in einem Rutsch (`run`)
+Falls Sie eine Episode sofort von A bis Z durchlaufen lassen möchten:
 
 ```bash
-python3 main.py --file "data/audio/meine_aufnahme.mp3"
-```
-
-### 3. Modelle anpassen
-
-Sie können die Modellgröße für Whisper und das LLM in Ollama direkt über Flags steuern:
-
-```bash
-python3 main.py \
-  --feed "https://example.com/podcast/feed.xml" \
-  --whisper-model small \
-  --llm-model qwen2.5:7b \
-  --language de
+python3 main.py run --search "Fest & Flauschig" --limit 1
 ```
 
 ---

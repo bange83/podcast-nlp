@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -112,6 +113,22 @@ class PodcastDownloader:
             ext = ".m4a"
 
         target_file = self.output_dir / f"{clean_title}{ext}"
+
+        meta_file = self.output_dir / f"{clean_title}.meta.json"
+        if not meta_file.exists():
+            meta_data = {
+                "title": episode.title,
+                "published": episode.published,
+                "audio_url": episode.audio_url,
+                "description": episode.description,
+                "podcast_title": episode.podcast_title,
+                "podcast_author": episode.podcast_author,
+            }
+            try:
+                with open(meta_file, "w", encoding="utf-8") as f:
+                    json.dump(meta_data, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
 
         if target_file.exists() and target_file.stat().st_size > 0:
             print(f"[Downloader] Bereits vorhanden: {target_file.name}")

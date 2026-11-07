@@ -1,7 +1,15 @@
+import json
 from pathlib import Path
 from typing import Any
 
-from .config import DEFAULT_OLLAMA_MODEL, DEFAULT_WHISPER_MODEL, HF_TOKEN
+from .config import (
+    AUDIO_DIR,
+    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_WHISPER_MODEL,
+    HF_TOKEN,
+    REPORTS_DIR,
+    TRANSCRIPTS_DIR,
+)
 from .downloader import PodcastDownloader
 from .nlp_analyzer import LocalNLPAnalyzer
 from .transcriber import AudioTranscriber
@@ -20,18 +28,192 @@ class PodcastPipeline:
         self.transcriber = AudioTranscriber(
             model_size=whisper_model,
             hf_token=token,
-            cpu_threads=cpu_threads
+            cpu_threads=cpu_threads,
         )
         self.analyzer = LocalNLPAnalyzer(model_name=ollama_model)
+
+    # =========================================================================
+    # Modulare Einzelschritte: Download -> Transkription -> NLP-Analyse
+    # =========================================================================
+
+    def download_episodes(
+        self,
+        query: str | None = None,
+        feed_url: str | None = None,
+        limit: int = 1,
+    ) -> list[Path]:
+        """Schritt 1: Lädt eine oder mehrere Folgen herunter und speichert Audio + Metadaten."""
+        podcast_title = None
+        podcast_author = None
+
+        if query:
+            print(f"\n🔍 Suche nach Podcast: '{query}'...")
+            results = self.downloader.search_podcasts(query, limit=3)
+            if not results:
+                raise ValueError(f"Kein Podcast für die Suche '{query}' gefunden.")
+            best_match = results[0]
+            podcast_title = best_match.get("name")
+            podcast_author = best_match.get("artist")
+            feed_url = best_match["feed_url"]
+            print(f"✅ Treffer gefunden: '{podcast_title}' von {podcast_author}")
+            print(f"📡 Feed-URL: {feed_url}")
+        if not feed_url:
+            raise ValueError("Bitte entweder --search oder --feed angeben.")
+
+        print(f"\n📡 Lese Feed ({limit} Folge{'n' if limit > 1 else ''}): {feed_url}")
+        episodes = self.downloader.fetch_feed_episodes(feed_url, limit=limit)
+        downloaded = []
+        for i, ep in enumerate(episodes, 1):
+            if not ep.podcast_title and podcast_title:
+                ep.podcast_title = podcast_title
+            if not ep.podcast_author and podcast_author:
+                ep.podcast_author = podcast_author
+            print(f"\n>>> [{i}/{len(episodes)}] Download: '{ep.title}'")
+            path = self.downloader.download_episode(ep)
+            downloaded.append(path)
+
+        print(f"\n✅ Download abgeschlossen: {len(downloaded)} Datei(en) in {AUDIO_DIR}")
+        return downloaded
+
+    def transcribe_batch(
+        self,
+        audio_file: Path | None = None,
+        language: str | None = None,
+        force: bool = False,
+    ) -> list[Path]:
+        """Schritt 2: Transkribiert einzelne oder alle Audiodateien in data/audio/ (Batch)."""
+        if audio_file:
+            if not audio_file.exists():
+                raise FileNotFoundError(f"Audiodatei nicht gefunden: {audio_file}")
+            targets = [audio_file]
+        else:
+            extensions = {".mp3", ".m4a", ".wav", ".aac", ".flac"}
+            if not AUDIO_DIR.exists():
+                print(f"[Pipeline] Audio-Verzeichnis {AUDIO_DIR} existiert noch nicht.")
+                return []
+            targets = sorted([f for f in AUDIO_DIR.iterdir() if f.suffix.lower() in extensions])
+            if not targets:
+                print(f"[Pipeline] Keine Audiodateien in {AUDIO_DIR} gefunden.")
+                return []
+
+        produced = []
+        for i, path in enumerate(targets, 1):
+            json_target = TRANSCRIPTS_DIR / f"{path.stem}.json"
+            if not force and json_target.exists():
+                print(f"[{i}/{len(targets)}] Transkript existiert bereits: {json_target.name}")
+                produced.append(json_target)
+                continue
+
+            print(f"\n[{i}/{len(targets)}] 🎧 Transkribiere {path.name}...")
+            self.transcriber.transcribe(
+                path,
+                language=language,
+                force_recompute=force,
+            )
+            produced.append(json_target)
+
+        print(f"\n✅ Transkription abgeschlossen: {len(produced)} Datei(en) in {TRANSCRIPTS_DIR}")
+        return produced
+
+    def analyze_batch(
+        self,
+        transcript_file: Path | None = None,
+        force: bool = False,
+    ) -> list[Path]:
+        """Schritt 3: Führt LLM-Analysen für Transkripte in data/transcripts/ durch (Batch)."""
+        if transcript_file:
+            if not transcript_file.exists():
+                raise FileNotFoundError(f"Transkriptdatei nicht gefunden: {transcript_file}")
+            targets = [transcript_file]
+        else:
+            if not TRANSCRIPTS_DIR.exists():
+                print(f"[Pipeline] Transkript-Verzeichnis {TRANSCRIPTS_DIR} existiert noch nicht.")
+                return []
+            targets = sorted(TRANSCRIPTS_DIR.glob("*.json"))
+            if not targets:
+                print(f"[Pipeline] Keine Transkripte in {TRANSCRIPTS_DIR} gefunden.")
+                return []
+
+        produced = []
+        for i, path in enumerate(targets, 1):
+            stem = path.stem
+            report_json = REPORTS_DIR / f"{stem}_analysis.json"
+            report_md = REPORTS_DIR / f"{stem}_report.md"
+
+            if not force and report_json.exists() and report_md.exists():
+                print(f"[{i}/{len(targets)}] Report existiert bereits: {report_md.name}")
+                produced.append(report_json)
+                continue
+
+            print(f"\n[{i}/{len(targets)}] 🧠 Analysiere Transkript: {path.name}...")
+            with open(path, "r", encoding="utf-8") as f:
+                transcript_data = json.load(f)
+
+            # Metadaten aus data/audio/<stem>.meta.json laden (falls vorhanden)
+            meta_file = AUDIO_DIR / f"{stem}.meta.json"
+            meta: dict[str, Any] = {}
+            if meta_file.exists():
+                try:
+                    with open(meta_file, "r", encoding="utf-8") as mf:
+                        meta = json.load(mf)
+                except Exception:
+                    pass
+
+            ep_title = meta.get("title") or transcript_data.get("audio_file") or stem
+            pod_title = meta.get("podcast_title")
+            pod_author = meta.get("podcast_author")
+            ep_desc = meta.get("description")
+
+            # Sprecher-Namen dynamisch auflösen, falls noch nicht geschehen
+            if transcript_data.get("has_diarization") and not transcript_data.get("speaker_mapping"):
+                print("🗣️ Löse Sprecher-Namen dynamisch mit LLM auf...")
+                transcript_data = self.analyzer.map_speaker_names(
+                    transcript_data,
+                    podcast_title=pod_title,
+                    podcast_author=pod_author,
+                    episode_title=ep_title,
+                    episode_description=ep_desc,
+                )
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(transcript_data, f, ensure_ascii=False, indent=2)
+
+            self.analyzer.analyze_transcript(transcript_data, title=ep_title)
+            produced.append(report_json)
+
+        print(f"\n✅ Analyse abgeschlossen: {len(produced)} Report(s) in {REPORTS_DIR}")
+        return produced
+
+    # =========================================================================
+    # End-to-End Orchestrierung (Download + Transkription + Analyse in Folge)
+    # =========================================================================
+
+    def run_end_to_end(
+        self,
+        query: str | None = None,
+        feed_url: str | None = None,
+        file: Path | None = None,
+        limit: int = 1,
+        language: str | None = None,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Führt alle 3 Schritte in einem Rutsch aus."""
+        if file:
+            return [self.process_audio_file(file, language=language, force=force)]
+        elif query:
+            return self.process_search(query, limit=limit, language=language, force=force)
+        elif feed_url:
+            return self.process_feed(feed_url, limit=limit, language=language, force=force)
+        else:
+            raise ValueError("Weder --search, --feed noch --file angegeben.")
 
     def process_search(
         self,
         query: str,
         limit: int = 1,
         language: str | None = None,
-        force: bool = False
+        force: bool = False,
     ) -> list[dict[str, Any]]:
-        """Sucht nach einem Podcast-Namen, wählt den ersten Treffer und verarbeitet ihn."""
+        """Sucht nach einem Podcast und führt alle Schritte aus."""
         print(f"\n🔍 Suche nach Podcast: '{query}'...")
         results = self.downloader.search_podcasts(query, limit=3)
         if not results:
@@ -81,7 +263,7 @@ class PodcastPipeline:
             transcript_data = self.transcriber.transcribe(
                 audio_path,
                 language=language,
-                force_recompute=force
+                force_recompute=force,
             )
 
             # Optionale Sprecher-Namensauflösung via LLM
@@ -103,7 +285,7 @@ class PodcastPipeline:
                 "episode": ep.title,
                 "audio_path": str(audio_path),
                 "transcript": transcript_data,
-                "analysis": analysis_data
+                "analysis": analysis_data,
             })
 
         return results
@@ -113,14 +295,14 @@ class PodcastPipeline:
         audio_path: Path,
         title: str | None = None,
         language: str | None = None,
-        force: bool = False
+        force: bool = False,
     ) -> dict[str, Any]:
         """Verarbeitet eine bereits lokal vorliegende Audiodatei (Stufe 2 & 3)."""
         print(f"\n🎧 2. Transkription von lokaler Datei: {audio_path.name}...")
         transcript_data = self.transcriber.transcribe(
             audio_path,
             language=language,
-            force_recompute=force
+            force_recompute=force,
         )
 
         if transcript_data.get("has_diarization"):
@@ -136,5 +318,5 @@ class PodcastPipeline:
         return {
             "audio_path": str(audio_path),
             "transcript": transcript_data,
-            "analysis": analysis_data
+            "analysis": analysis_data,
         }
