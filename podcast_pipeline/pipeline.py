@@ -124,6 +124,9 @@ class PodcastPipeline:
         if transcript_file:
             if not transcript_file.exists():
                 raise FileNotFoundError(f"Transkriptdatei nicht gefunden: {transcript_file}")
+            # Falls eine .txt Datei angegeben wurde, bevorzugen wir die zugehörige .json (enthält Zeitstempel & Segmente)
+            if transcript_file.suffix == ".txt" and transcript_file.with_suffix(".json").exists():
+                transcript_file = transcript_file.with_suffix(".json")
             targets = [transcript_file]
         else:
             if not TRANSCRIPTS_DIR.exists():
@@ -146,8 +149,18 @@ class PodcastPipeline:
                 continue
 
             print(f"\n[{i}/{len(targets)}] 🧠 Analysiere Transkript: {path.name}...")
-            with open(path, "r", encoding="utf-8") as f:
-                transcript_data = json.load(f)
+            if path.suffix == ".json":
+                with open(path, "r", encoding="utf-8") as f:
+                    transcript_data = json.load(f)
+            else:
+                # Falls tatsächlich nur eine reine .txt Datei vorliegt:
+                with open(path, "r", encoding="utf-8") as f:
+                    raw_text = f.read()
+                transcript_data = {
+                    "audio_file": stem,
+                    "full_text": raw_text,
+                    "segments": [],
+                }
 
             # Metadaten aus data/audio/<stem>.meta.json laden (falls vorhanden)
             meta_file = AUDIO_DIR / f"{stem}.meta.json"
