@@ -230,167 +230,24 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         return []
 
     # =========================================================================
-    # Stufe 2: Kontext-verankertes Refinement (Korrektur pro Thema)
-    # =========================================================================
-
-    def refine_topic_segments(
-        self,
-        transcript_data: dict[str, Any],
-        chapters: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """Korrigiert phonetische Hörfehler von Whisper gezielt über eine sichere Find-and-Replace-Liste."""
-        segments = transcript_data.get("segments", [])
-        if not segments or not chapters:
-            return transcript_data
-
-        print(f"[NLPAnalyzer] Starte kontextuelles Refinement für {len(chapters)} Themenblöcke...")
-        corrections_count = 0
-
-        for ch_idx, ch in enumerate(chapters, 1):
-            ch_start = ch.get("start_seconds", 0.0)
-            ch_end = ch.get("end_seconds", float("inf"))
-            ch_title = ch.get("title", f"Thema {ch_idx}")
-            ch_keywords = ", ".join(ch.get("keywords", []))
-
-            # Segmente dieses Kapitels filtern
-            matching_segments = [
-                s for s in segments
-                if ch_start <= float(s.get("start", 0)) <= ch_end
-            ]
-
-            if not matching_segments:
-                continue
-
-            # In Portionen von ca. 35 Segmenten verarbeiten
-            chunk_size = 35
-            for chunk_offset in range(0, len(matching_segments), chunk_size):
-                sub_segments = matching_segments[chunk_offset : chunk_offset + chunk_size]
-                chunk_dialogue = [
-                    f"{s.get('speaker', 'Sprecher')}: {s.get('text', '')}"
-                    for s in sub_segments
-                ]
-                dialogue_text = "\n".join(chunk_dialogue)
-
-                prompt = f"""Du bist ein professioneller Audio-Transkript-Lektor.
-Thema des aktuellen Abschnitts: "{ch_title}"
-Schlüsselbegriffe & Kontext: {ch_keywords}
-
-Hier ist der gesprochene Dialog-Ausschnitt:
----
-{dialogue_text}
----
-
-Aufgabe:
-Finde ausschließlich offensichtliche akustische Verhörer von Whisper (insbesondere falsch geschriebene Eigennamen, Schiffe, Marken, Personen, Orte oder Fachbegriffe, die akustisch missverstanden wurden).
-
-Beispiele:
-- "Mind-Shift 3" -> "Mein Schiff 3" (bei Thema Schifffahrt/Kreuzfahrt)
-- "Bocker" -> "Booker" (bei Thema Musik/Tournee)
-- "Kimmich" -> "Chemie"
-
-STRENGE VERBOTE:
-1. VERBOTEN: Silbentrennung mit Bindestrichen! Niemals Bindestriche in normale Wörter einfügen (z.B. KEIN 'Ham-burg', KEIN 'Lot-to', KEIN 'Bab-y', KEIN 'G-M-S').
-2. VERBOTEN: Übersetzung ins Englische! Deutsche Wörter, Jingles, Slang oder Sätze niemals ins Englische übersetzen (z.B. KEIN 'Blood out of the box').
-3. VERBOTEN: Keine Anmerkungen oder Erklärungen in Klammern (z.B. KEIN 'Schweizer (Name)').
-4. VERBOTEN: Keine Grammatik- oder Stilkorrekturen! Umgangssprache und Mundart bleiben exakt so erhalten.
-5. Im Zweifel NICHTS ändern! Wenn keine klaren akustischen Hörfehler vorliegen, gib immer ein leeres Array [] zurück.
-
-Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
-{{
-  "corrections": [
-    {{
-      "original": "falscher Begriff wie er im Text steht",
-      "corrected": "korrekter Begriff",
-      "reason": "Kurze Begründung"
-    }}
-  ]
-}}
-"""
-                try:
-                    resp = ollama.chat(
-                        model=self.model_name,
-                        messages=[{"role": "user", "content": prompt}],
-                        options={"temperature": 0.1},
-                    )
-                    raw_content = resp["message"]["content"].strip()
-                    if "{" in raw_content and "}" in raw_content:
-                        raw_json = raw_content[raw_content.find("{") : raw_content.rfind("}") + 1]
-                        data = json.loads(raw_json)
-                        corrections = data.get("corrections", [])
-                        for c in corrections:
-                            orig = c.get("original", "").strip()
-                            repl = c.get("corrected", "").strip()
-                            if not orig or not repl or orig.lower() == repl.lower():
-                                continue
-
-                            # 1. Silbentrennungs- & Bindestrich-Filter (z.B. Hamburg -> Ham-burg)
-                            if orig.replace("-", "").strip().lower() == repl.replace("-", "").strip().lower():
-                                continue
-                            if "-" in repl and "-" not in orig:
-                                continue
-
-                            # 2. Klammern / Metakommentare filtern (z.B. Schweizer (Name))
-                            if "(" in repl or ")" in repl or "[" in repl or "]" in repl:
-                                continue
-
-                            # 3. Unerwünschte englische Übersetzungen filtern
-                            english_stop_words = {"the", "of", "out", "and", "box", "dash", "young", "blood"}
-                            orig_words = set(orig.lower().split())
-                            repl_words = set(repl.lower().split())
-                            if (repl_words - orig_words) & english_stop_words:
-                                continue
-
-                            # Ersetze gezielt in den Segmenten dieses Chunks
-                            replaced_any = False
-                            for s in sub_segments:
-                                text_val = s.get("text", "")
-                                if orig in text_val:
-                                    s["text"] = text_val.replace(orig, repl)
-                                    replaced_any = True
-                            if replaced_any:
-                                print(f"  ✨ [Refiner] '{orig}' -> '{repl}' ({c.get('reason', '')})")
-                                corrections_count += 1
-                except Exception as e:
-                    print(f"[NLPAnalyzer] Fehler beim Refinement eines Chunks: {e}")
-
-        print(f"[NLPAnalyzer] Refinement abgeschlossen ({corrections_count} gezielte Begriff-Korrektur(en)).")
-
-        # Volltext neu aufbauen
-        new_text_lines = []
-        for s in segments:
-            spk = s.get("speaker")
-            if spk and spk != "UNKNOWN":
-                new_text_lines.append(f"[{s['start']}s - {s['end']}s] {spk}: {s['text']}")
-            else:
-                new_text_lines.append(f"[{s['start']}s - {s['end']}s] {s['text']}")
-
-        transcript_data["segments"] = segments
-        transcript_data["full_text"] = "\n".join(new_text_lines)
-        transcript_data["chapters"] = chapters
-        return transcript_data
-
-    # =========================================================================
-    # Stufe 3: Umfassende Synthese & Analyse
+    # Stufe 2: Umfassende Synthese & Analyse (inkl. Kapitelübersicht)
     # =========================================================================
 
     def analyze_transcript(
         self,
         transcript_data: dict[str, Any],
         title: str | None = None,
-        refine_chapters: bool = True,
     ) -> dict[str, Any]:
-        """Führt Themen-Segmentierung, kontextuelles Refinement und die finale NLP-Analyse durch."""
+        """Führt Themen-Segmentierung und die finale NLP-Analyse durch."""
         file_stem = Path(transcript_data.get("audio_file", "podcast")).stem
         episode_title = title or file_stem
 
-        # 1. Themen-Segmentierung & Kapitelmarker
+        # Themen-Segmentierung & Kapitelmarker (O-Ton bleibt authentisch erhalten)
         chapters = transcript_data.get("chapters")
         if not chapters:
             chapters = self.segment_topics(transcript_data, title=episode_title)
-
-        # 2. Kontextuelles Refinement pro Kapitel
-        if refine_chapters and chapters:
-            transcript_data = self.refine_topic_segments(transcript_data, chapters)
+            if chapters:
+                transcript_data["chapters"] = chapters
 
         text = transcript_data.get("full_text", "")
 
