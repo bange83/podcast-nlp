@@ -1,15 +1,16 @@
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional, List
-from tqdm import tqdm
+from typing import Any
+
 from faster_whisper import WhisperModel
+from tqdm import tqdm
 
 from .config import (
-    TRANSCRIPTS_DIR,
-    DEFAULT_WHISPER_MODEL,
     DEFAULT_COMPUTE_TYPE,
     DEFAULT_CPU_THREADS,
-    HF_TOKEN
+    DEFAULT_WHISPER_MODEL,
+    HF_TOKEN,
+    TRANSCRIPTS_DIR,
 )
 
 
@@ -21,7 +22,7 @@ class AudioTranscriber:
         compute_type: str = DEFAULT_COMPUTE_TYPE,
         cpu_threads: int = DEFAULT_CPU_THREADS,
         output_dir: Path = TRANSCRIPTS_DIR,
-        hf_token: Optional[str] = HF_TOKEN,
+        hf_token: str | None = HF_TOKEN,
     ):
         self.model_size = model_size
         self.device = device
@@ -30,8 +31,8 @@ class AudioTranscriber:
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.hf_token = hf_token or HF_TOKEN
-        self._model: Optional[WhisperModel] = None
-        self._diarization_pipeline = None
+        self._model: WhisperModel | None = None
+        self._diarization_pipeline: Any = None
 
     @property
     def model(self) -> WhisperModel:
@@ -46,7 +47,7 @@ class AudioTranscriber:
             )
         return self._model
 
-    def _get_diarization_pipeline(self):
+    def _get_diarization_pipeline(self) -> Any:
         """Initialisiert die PyAnnote Diarization Pipeline via HuggingFace."""
         if not self.hf_token:
             return None
@@ -59,7 +60,7 @@ class AudioTranscriber:
                     "pyannote/speaker-diarization-3.1",
                     token=self.hf_token
                 )
-                if torch.backends.mps.is_available():
+                if pipeline is not None and torch.backends.mps.is_available():
                     # Apple Silicon GPU Beschleunigung
                     pipeline.to(torch.device("mps"))
                     print("[Transcriber] Diarization läuft beschleunigt auf Apple Silicon (MPS).")
@@ -67,7 +68,7 @@ class AudioTranscriber:
             except Exception as e:
                 err_str = str(e)
                 print("\n" + "="*70)
-                print(f"[Transcriber] ⚠️ FEHLER BEI DER SPRECHERERKENNUNG (PyAnnote):")
+                print("[Transcriber] ⚠️ FEHLER BEI DER SPRECHERERKENNUNG (PyAnnote):")
                 if "403" in err_str or "gated" in err_str:
                     print("Der Hugging Face Token hat noch keinen Zugriff auf alle PyAnnote-Modelle.")
                     print("Bitte stellen Sie sicher, dass Sie bei Hugging Face eingeloggt sind")
@@ -81,7 +82,7 @@ class AudioTranscriber:
                 self._diarization_pipeline = False
         return self._diarization_pipeline if self._diarization_pipeline is not False else None
 
-    def _run_diarization(self, audio_path: Path):
+    def _run_diarization(self, audio_path: Path) -> Any:
         """Führt Sprechererkennung auf der Audiodatei durch und cacht das RTTM-Ergebnis."""
         rttm_path = self.output_dir / f"{audio_path.stem}.rttm"
         if rttm_path.exists():
@@ -107,9 +108,9 @@ class AudioTranscriber:
 
         print(f"[Transcriber] Führe Sprechertrennung (Diarization) für {audio_path.name} durch...")
         try:
-            res = pipeline(str(audio_path))
+            res: Any = pipeline(str(audio_path))
             # PyAnnote 3.1+ gibt DiarizeOutput zurück
-            annotation = getattr(res, "speaker_diarization", res)
+            annotation: Any = getattr(res, "speaker_diarization", res)
 
             # Als RTTM für sofortige Wiederverwendung speichern
             try:
@@ -125,7 +126,7 @@ class AudioTranscriber:
             return None
 
     @staticmethod
-    def _assign_speaker_to_segment(seg_start: float, seg_end: float, diarization) -> str:
+    def _assign_speaker_to_segment(seg_start: float, seg_end: float, diarization: Any) -> str:
         """Findet den dominanten Sprecher für einen gegebenen Zeitbereich."""
         if not diarization:
             return "UNKNOWN"
@@ -137,13 +138,13 @@ class AudioTranscriber:
             segment = Segment(seg_start, seg_end)
             cropped = diarization.crop(segment)
 
-            speaker_durations = {}
+            speaker_durations: dict[str, float] = {}
             for turn, _, speaker in cropped.itertracks(yield_label=True):
                 dur = turn.end - turn.start
                 speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + dur
 
             if speaker_durations:
-                return max(speaker_durations, key=speaker_durations.get)
+                return max(speaker_durations, key=lambda spk: speaker_durations[spk])
 
             # Fallback 1: Prüfe den Mittelpunkt des Segments
             mid_point = (seg_start + seg_end) / 2
@@ -171,9 +172,9 @@ class AudioTranscriber:
     def transcribe(
         self,
         audio_path: Path,
-        language: Optional[str] = None,
-        force_recompute: bool = False
-    ) -> Dict[str, Any]:
+        language: str | None = None,
+        force_recompute: bool = False,
+    ) -> dict[str, Any]:
         """Transkribiert eine Audiodatei und ordnet optional Sprecher (Jan vs Olli) zu."""
         stem = audio_path.stem
         json_path = self.output_dir / f"{stem}.json"
@@ -211,7 +212,7 @@ class AudioTranscriber:
                     with open(txt_path, "w", encoding="utf-8") as f:
                         f.write(existing_data["full_text"])
 
-                    print(f"[Transcriber] Sprecher erfolgreich zugeordnet!")
+                    print("[Transcriber] Sprecher erfolgreich zugeordnet!")
                     return existing_data
 
             print(f"[Transcriber] Transkript existiert bereits: {json_path.name}")

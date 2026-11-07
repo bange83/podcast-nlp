@@ -1,9 +1,10 @@
 from pathlib import Path
-from typing import Optional, List, Dict, Any
-from .config import DEFAULT_WHISPER_MODEL, DEFAULT_OLLAMA_MODEL, HF_TOKEN
-from .downloader import PodcastDownloader, PodcastEpisode
-from .transcriber import AudioTranscriber
+from typing import Any
+
+from .config import DEFAULT_OLLAMA_MODEL, DEFAULT_WHISPER_MODEL, HF_TOKEN
+from .downloader import PodcastDownloader
 from .nlp_analyzer import LocalNLPAnalyzer
+from .transcriber import AudioTranscriber
 
 
 class PodcastPipeline:
@@ -11,7 +12,7 @@ class PodcastPipeline:
         self,
         whisper_model: str = DEFAULT_WHISPER_MODEL,
         ollama_model: str = DEFAULT_OLLAMA_MODEL,
-        hf_token: Optional[str] = HF_TOKEN,
+        hf_token: str | None = HF_TOKEN,
         cpu_threads: int = 8,
     ):
         self.downloader = PodcastDownloader()
@@ -27,9 +28,9 @@ class PodcastPipeline:
         self,
         query: str,
         limit: int = 1,
-        language: Optional[str] = None,
+        language: str | None = None,
         force: bool = False
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Sucht nach einem Podcast-Namen, wählt den ersten Treffer und verarbeitet ihn."""
         print(f"\n🔍 Suche nach Podcast: '{query}'...")
         results = self.downloader.search_podcasts(query, limit=3)
@@ -44,30 +45,39 @@ class PodcastPipeline:
             feed_url=best_match["feed_url"],
             limit=limit,
             language=language,
-            force=force
+            force=force,
+            podcast_title=best_match.get("name"),
+            podcast_author=best_match.get("artist"),
         )
 
     def process_feed(
         self,
         feed_url: str,
         limit: int = 1,
-        language: Optional[str] = None,
-        force: bool = False
-    ) -> List[Dict[str, Any]]:
+        language: str | None = None,
+        force: bool = False,
+        podcast_title: str | None = None,
+        podcast_author: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Verarbeitet Episoden aus einem RSS-Feed durch alle 3 Stufen."""
-        print(f"\n==========================================")
+        print("\n==========================================")
         print(f"📡 1. Lese RSS-Feed: {feed_url}")
-        print(f"==========================================")
+        print("==========================================")
         episodes = self.downloader.fetch_feed_episodes(feed_url, limit=limit)
 
         results = []
         for i, ep in enumerate(episodes, 1):
+            if not ep.podcast_title and podcast_title:
+                ep.podcast_title = podcast_title
+            if not ep.podcast_author and podcast_author:
+                ep.podcast_author = podcast_author
+
             print(f"\n>>> Verarbeite Episode {i}/{len(episodes)}: '{ep.title}'")
             # Stufe 1: Download
             audio_path = self.downloader.download_episode(ep)
 
             # Stufe 2: Transkription
-            print(f"\n🎧 2. Transkription...")
+            print("\n🎧 2. Transkription...")
             transcript_data = self.transcriber.transcribe(
                 audio_path,
                 language=language,
@@ -76,11 +86,17 @@ class PodcastPipeline:
 
             # Optionale Sprecher-Namensauflösung via LLM
             if transcript_data.get("has_diarization"):
-                print(f"\n🗣️ Löse Sprecher-Namen mit LLM auf...")
-                transcript_data = self.analyzer.map_speaker_names(transcript_data)
+                print("\n🗣️ Löse Sprecher-Namen dynamisch mit LLM auf...")
+                transcript_data = self.analyzer.map_speaker_names(
+                    transcript_data,
+                    podcast_title=ep.podcast_title,
+                    podcast_author=ep.podcast_author,
+                    episode_title=ep.title,
+                    episode_description=ep.description,
+                )
 
             # Stufe 3: NLP Analyse
-            print(f"\n🧠 3. NLP-Analyse mit lokalem LLM...")
+            print("\n🧠 3. NLP-Analyse mit lokalem LLM...")
             analysis_data = self.analyzer.analyze_transcript(transcript_data, title=ep.title)
 
             results.append({
@@ -95,10 +111,10 @@ class PodcastPipeline:
     def process_audio_file(
         self,
         audio_path: Path,
-        title: Optional[str] = None,
-        language: Optional[str] = None,
+        title: str | None = None,
+        language: str | None = None,
         force: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Verarbeitet eine bereits lokal vorliegende Audiodatei (Stufe 2 & 3)."""
         print(f"\n🎧 2. Transkription von lokaler Datei: {audio_path.name}...")
         transcript_data = self.transcriber.transcribe(
@@ -108,10 +124,13 @@ class PodcastPipeline:
         )
 
         if transcript_data.get("has_diarization"):
-            print(f"\n🗣️ Löse Sprecher-Namen mit LLM auf...")
-            transcript_data = self.analyzer.map_speaker_names(transcript_data)
+            print("\n🗣️ Löse Sprecher-Namen dynamisch mit LLM auf...")
+            transcript_data = self.analyzer.map_speaker_names(
+                transcript_data,
+                episode_title=title or audio_path.stem,
+            )
 
-        print(f"\n🧠 3. NLP-Analyse mit lokalem LLM...")
+        print("\n🧠 3. NLP-Analyse mit lokalem LLM...")
         analysis_data = self.analyzer.analyze_transcript(transcript_data, title=title or audio_path.stem)
 
         return {

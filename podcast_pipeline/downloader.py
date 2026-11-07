@@ -15,6 +15,8 @@ class PodcastEpisode:
     published: str
     audio_url: str
     description: str
+    podcast_title: str = ""
+    podcast_author: str = ""
     local_path: Path | None = None
 
 
@@ -62,6 +64,9 @@ class PodcastDownloader:
         if not feed.entries:
             raise ValueError(f"Keine Episoden im RSS-Feed gefunden: {feed_url}")
 
+        podcast_title = feed.feed.get("title", "")
+        podcast_author = feed.feed.get("author", "") or feed.feed.get("itunes_author", "")
+
         episodes: list[PodcastEpisode] = []
         for entry in feed.entries[:limit]:
             audio_url = None
@@ -92,6 +97,8 @@ class PodcastDownloader:
                         published=published,
                         audio_url=audio_url,
                         description=description,
+                        podcast_title=podcast_title,
+                        podcast_author=podcast_author,
                     )
                 )
 

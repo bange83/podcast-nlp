@@ -1,9 +1,10 @@
 import json
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Any
+
 import ollama
 
-from .config import REPORTS_DIR, DEFAULT_OLLAMA_MODEL
+from .config import DEFAULT_OLLAMA_MODEL, REPORTS_DIR
 
 
 class LocalNLPAnalyzer:
@@ -18,14 +19,18 @@ class LocalNLPAnalyzer:
 
     def map_speaker_names(
         self,
-        transcript_data: Dict[str, Any],
-        candidate_hosts: Optional[List[str]] = None
-    ) -> Dict[str, Any]:
-        """Versucht via lokalem LLM generische Sprecher-IDs (SPEAKER_07 etc.) echten Namen zuzuordnen."""
+        transcript_data: dict[str, Any],
+        podcast_title: str | None = None,
+        podcast_author: str | None = None,
+        episode_title: str | None = None,
+        episode_description: str | None = None,
+        candidate_hosts: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Versucht via lokalem LLM generische Sprecher-IDs (SPEAKER_00 etc.) echten Namen zuzuordnen."""
         segments = transcript_data.get("segments", [])
 
         # Häufigkeiten der Sprecher ermitteln
-        counts = {}
+        counts: dict[str, int] = {}
         for s in segments:
             spk = s.get("speaker")
             if spk and spk != "UNKNOWN":
@@ -34,7 +39,7 @@ class LocalNLPAnalyzer:
         if len(counts) < 2:
             return transcript_data
 
-        # Die 2 dominantesten Sprecher finden (z.B. Jan & Olli)
+        # Die 2 dominantesten Sprecher finden
         top_speakers = [spk for spk, _ in sorted(counts.items(), key=lambda x: x[1], reverse=True)[:2]]
 
         # Ausschnitt finden, in dem diese beiden tatsächlich miteinander reden (Werbung überspringen)
@@ -48,15 +53,39 @@ class LocalNLPAnalyzer:
 
         sample_text = "\n".join(sample_dialogue)
 
-        hosts_hint = f"Mögliche Personen: {', '.join(candidate_hosts)}" if candidate_hosts else "Z.B. Jan Böhmermann, Olli Schulz bei Fest & Flauschig."
+        context_lines = []
+        if podcast_title:
+            context_lines.append(f"- Podcast: {podcast_title}")
+        if podcast_author:
+            context_lines.append(f"- Moderation / Host(s) / Autor: {podcast_author}")
+        if episode_title:
+            context_lines.append(f"- Episode: {episode_title}")
+        if episode_description:
+            # Erste 300 Zeichen der Beschreibung falls vorhanden
+            clean_desc = episode_description.strip()[:300].replace("\n", " ")
+            context_lines.append(f"- Episoden-Beschreibung: {clean_desc}")
+        if candidate_hosts:
+            context_lines.append(f"- Mögliche Personen: {', '.join(candidate_hosts)}")
 
-        prompt = f"""Hier ist ein Dialog aus einem Podcast zwischen den beiden Hauptsprechern ({', '.join(top_speakers)}):
+        meta_info = "\n".join(context_lines) if context_lines else "- Kein spezifischer Podcast-Kontext verfügbar"
+
+        prompt = f"""Du bist ein Experte für Podcast-Analyse und Sprecherzuordnung.
+
+Hier sind die Metadaten der Podcast-Episode:
+{meta_info}
+
+Hier ist ein repräsentativer Gesprächsausschnitt zwischen den beiden Hauptsprechern ({', '.join(top_speakers)}):
 
 {sample_text}
 
-Aufgabe: Ordne den beiden Sprecher-IDs ({', '.join(top_speakers)}) die echten Namen der Personen zu ({hosts_hint}), basierend darauf wie sie sprechen und worüber sie reden.
+Aufgabe:
+Ordne den beiden Sprecher-IDs ({', '.join(top_speakers)}) die echten Namen der jeweiligen Personen zu.
+Kriterien:
+1. Nutze die Metadaten (Host-Namen, Autoren, Titel) und den Gesprächsverlauf (wie sprechen sich die Personen an, welche Rollen nehmen sie ein?).
+2. Wenn sich ein Name klar zuordnen lässt, verwende diesen Namen.
+3. Falls ein Sprecher nicht zweifelsfrei identifiziert werden kann, verwende einen neutralen Bezeichner wie "Host 1" / "Host 2" oder behalte die Sprecher-ID. Erfinde keinesfalls Personen.
 
-Antworte ausschließlich im JSON-Format:
+Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
 {{
   "{top_speakers[0]}": "Name der Person",
   "{top_speakers[1]}": "Name der Person"
@@ -96,9 +125,9 @@ Antworte ausschließlich im JSON-Format:
 
     def analyze_transcript(
         self,
-        transcript_data: Dict[str, Any],
-        title: Optional[str] = None
-    ) -> Dict[str, Any]:
+        transcript_data: dict[str, Any],
+        title: str | None = None
+    ) -> dict[str, Any]:
         """Führt umfassende NLP-Analysen auf dem Transkript mittels lokalem LLM durch."""
         text = transcript_data.get("full_text", "")
         file_stem = Path(transcript_data.get("audio_file", "podcast")).stem
@@ -133,7 +162,7 @@ Erstelle eine fundierte Analyse und antworte im folgenden JSON-Format:
   ],
   "topics": ["Konkretes Thema 1", "Konkretes Thema 2"],
   "named_entities": {{
-    "persons": ["Tatsächlich im Podcast genannte reale Personen (z.B. Jan Böhmermann, Olli Schulz, Gäste)"],
+    "persons": ["Tatsächlich im Podcast genannte reale Personen, Moderatoren, Gäste"],
     "organizations": ["Erwähnte Institutionen, Sender, Unternehmen"],
     "tools_and_media": ["Erwähnte Bücher, Filme, Songs, Software"]
   }},
@@ -199,7 +228,7 @@ WICHTIG:
         print(f"[NLPAnalyzer] Analyse abgeschlossen! Gespeichert unter:\n  -> {json_report_path}\n  -> {md_report_path}")
         return analysis_result
 
-    def _save_markdown_report(self, data: Dict[str, Any], path: Path) -> None:
+    def _save_markdown_report(self, data: dict[str, Any], path: Path) -> None:
         """Erzeugt einen ansprechenden Markdown-Bericht aus den Analyseergebnissen."""
         md = []
         md.append(f"# Podcast-Analyse: {data.get('title', 'Episode')}\n")
@@ -211,13 +240,13 @@ WICHTIG:
             md.append("## 📝 Zusammenfassung")
             md.append(data["detailed_summary"] + "\n")
 
-        if "key_takeaways" in data and data["key_takeaways"]:
+        if data.get("key_takeaways"):
             md.append("## 💡 Wichtigste Kernaussagen")
             for item in data["key_takeaways"]:
                 md.append(f"- {item}")
             md.append("")
 
-        if "topics" in data and data["topics"]:
+        if data.get("topics"):
             md.append("## 🏷️ Themen")
             md.append(", ".join(f"`{t}`" for t in data["topics"]) + "\n")
 
@@ -238,7 +267,7 @@ WICHTIG:
                 md.append(f"- **Begründung:** {st['explanation']}")
             md.append("")
 
-        if "actionable_insights" in data and data["actionable_insights"]:
+        if data.get("actionable_insights"):
             md.append("## 🚀 Erkenntnisse & Praxistipps")
             for item in data["actionable_insights"]:
                 md.append(f"- {item}")

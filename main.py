@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 from pathlib import Path
+
+from podcast_pipeline.config import (
+    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_WHISPER_MODEL,
+    HF_TOKEN,
+)
 from podcast_pipeline.pipeline import PodcastPipeline
-from podcast_pipeline.config import DEFAULT_WHISPER_MODEL, DEFAULT_OLLAMA_MODEL, HF_TOKEN
 
 
 def main():
