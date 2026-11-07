@@ -281,24 +281,27 @@ Hier ist der gesprochene Dialog-Ausschnitt:
 ---
 
 Aufgabe:
-Finde offensichtliche akustische Transkriptions- und Hörfehler von Whisper (besonders Eigennamen, Markennamen, Schiffe, Bands, Personen, Orte, Fachbegriffe oder Redewendungen, die akustisch missverstanden wurden).
+Finde ausschließlich offensichtliche akustische Verhörer von Whisper (insbesondere falsch geschriebene Eigennamen, Schiffe, Marken, Personen, Orte oder Fachbegriffe, die akustisch missverstanden wurden).
 
 Beispiele:
 - "Mind-Shift 3" -> "Mein Schiff 3" (bei Thema Schifffahrt/Kreuzfahrt)
 - "Bocker" -> "Booker" (bei Thema Musik/Tournee)
 - "Kimmich" -> "Chemie"
 
-WICHTIG:
-- Erstelle eine Liste von konkreten Wort-Ersetzungen ("original" -> "corrected").
-- Verändere NIEMALS grammatikalische Eigenheiten, Füllwörter, Satzbau oder Umgangssprache.
-- Wenn im Text keine offensichtlichen Hörfehler vorliegen, gib ein leeres Array [] zurück.
+STRENGE VERBOTE:
+1. VERBOTEN: Silbentrennung mit Bindestrichen! Niemals Bindestriche in normale Wörter einfügen (z.B. KEIN 'Ham-burg', KEIN 'Lot-to', KEIN 'Bab-y', KEIN 'G-M-S').
+2. VERBOTEN: Übersetzung ins Englische! Deutsche Wörter, Jingles, Slang oder Sätze niemals ins Englische übersetzen (z.B. KEIN 'Blood out of the box').
+3. VERBOTEN: Keine Anmerkungen oder Erklärungen in Klammern (z.B. KEIN 'Schweizer (Name)').
+4. VERBOTEN: Keine Grammatik- oder Stilkorrekturen! Umgangssprache und Mundart bleiben exakt so erhalten.
+5. Im Zweifel NICHTS ändern! Wenn keine klaren akustischen Hörfehler vorliegen, gib immer ein leeres Array [] zurück.
 
 Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
 {{
   "corrections": [
     {{
       "original": "falscher Begriff wie er im Text steht",
-      "corrected": "korrekter Begriff"
+      "corrected": "korrekter Begriff",
+      "reason": "Kurze Begründung"
     }}
   ]
 }}
@@ -320,6 +323,23 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
                             if not orig or not repl or orig.lower() == repl.lower():
                                 continue
 
+                            # 1. Silbentrennungs- & Bindestrich-Filter (z.B. Hamburg -> Ham-burg)
+                            if orig.replace("-", "").strip().lower() == repl.replace("-", "").strip().lower():
+                                continue
+                            if "-" in repl and "-" not in orig:
+                                continue
+
+                            # 2. Klammern / Metakommentare filtern (z.B. Schweizer (Name))
+                            if "(" in repl or ")" in repl or "[" in repl or "]" in repl:
+                                continue
+
+                            # 3. Unerwünschte englische Übersetzungen filtern
+                            english_stop_words = {"the", "of", "out", "and", "box", "dash", "young", "blood"}
+                            orig_words = set(orig.lower().split())
+                            repl_words = set(repl.lower().split())
+                            if (repl_words - orig_words) & english_stop_words:
+                                continue
+
                             # Ersetze gezielt in den Segmenten dieses Chunks
                             replaced_any = False
                             for s in sub_segments:
@@ -328,7 +348,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
                                     s["text"] = text_val.replace(orig, repl)
                                     replaced_any = True
                             if replaced_any:
-                                print(f"  ✨ [Refiner] '{orig}' -> '{repl}'")
+                                print(f"  ✨ [Refiner] '{orig}' -> '{repl}' ({c.get('reason', '')})")
                                 corrections_count += 1
                 except Exception as e:
                     print(f"[NLPAnalyzer] Fehler beim Refinement eines Chunks: {e}")
