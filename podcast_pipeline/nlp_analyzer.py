@@ -238,7 +238,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         transcript_data: dict[str, Any],
         chapters: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Korrigiert phonetische Hörfehler von Whisper gezielt verankert im Thema des jeweiligen Kapitels."""
+        """Korrigiert phonetische Hörfehler von Whisper gezielt über eine sichere Find-and-Replace-Liste."""
         segments = transcript_data.get("segments", [])
         if not segments or not chapters:
             return transcript_data
@@ -253,40 +253,55 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
             ch_keywords = ", ".join(ch.get("keywords", []))
 
             # Segmente dieses Kapitels filtern
-            matching_indices = [
-                i for i, s in enumerate(segments)
+            matching_segments = [
+                s for s in segments
                 if ch_start <= float(s.get("start", 0)) <= ch_end
             ]
 
-            if not matching_indices:
+            if not matching_segments:
                 continue
 
-            # In handlichen Portionen (~30 Segmente) an das LLM schicken
-            chunk_size = 30
-            for chunk_offset in range(0, len(matching_indices), chunk_size):
-                sub_indices = matching_indices[chunk_offset : chunk_offset + chunk_size]
-                chunk_lines = [
-                    f"[{segments[i]['start']:.2f}s] {segments[i].get('speaker', 'Sprecher')}: {segments[i].get('text', '')}"
-                    for i in sub_indices
+            # In Portionen von ca. 35 Segmenten verarbeiten
+            chunk_size = 35
+            for chunk_offset in range(0, len(matching_segments), chunk_size):
+                sub_segments = matching_segments[chunk_offset : chunk_offset + chunk_size]
+                chunk_dialogue = [
+                    f"{s.get('speaker', 'Sprecher')}: {s.get('text', '')}"
+                    for s in sub_segments
                 ]
-                chunk_text = "\n".join(chunk_lines)
+                dialogue_text = "\n".join(chunk_dialogue)
 
-                prompt = f"""Du bist ein professioneller Audio-Transkript-Korrektor.
-Thema dieses Abschnitts: "{ch_title}"
+                prompt = f"""Du bist ein professioneller Audio-Transkript-Lektor.
+Thema des aktuellen Abschnitts: "{ch_title}"
 Schlüsselbegriffe & Kontext: {ch_keywords}
 
-Hier ist der rohe Whisper-Transkripttext:
-{chunk_text}
+Hier ist der gesprochene Dialog-Ausschnitt:
+---
+{dialogue_text}
+---
 
 Aufgabe:
-Korrigiere ausschließlich offensichtliche phonetische Transkriptions- und Hörfehler von Whisper (z.B. 'Mind-Shift 3' -> 'Mein Schiff 3', falsch verstandene Eigennamen, Schiffsnamen, Marken, Orte oder Fachbegriffe passend zum Thema "{ch_title}").
+Finde offensichtliche akustische Transkriptions- und Hörfehler von Whisper (besonders Eigennamen, Markennamen, Schiffe, Bands, Personen, Orte, Fachbegriffe oder Redewendungen, die akustisch missverstanden wurden).
 
-STRENGE REGELN:
-- Verändere NIEMALS den Satzbau, die Grammatik oder die gesprochene Umgangssprache der Sprecher.
-- Behalte die Zeitstempel und Sprechernamen exakt bei.
-- Gib genau die gleiche Anzahl an Zeilen im selben Format zurück: [Sekundens] Sprecher: Korrigierter Text
+Beispiele:
+- "Mind-Shift 3" -> "Mein Schiff 3" (bei Thema Schifffahrt/Kreuzfahrt)
+- "Bocker" -> "Booker" (bei Thema Musik/Tournee)
+- "Kimmich" -> "Chemie"
 
-Antworte nur mit den korrigierten Zeilen, ohne Einleitung oder Codeblock:
+WICHTIG:
+- Erstelle eine Liste von konkreten Wort-Ersetzungen ("original" -> "corrected").
+- Verändere NIEMALS grammatikalische Eigenheiten, Füllwörter, Satzbau oder Umgangssprache.
+- Wenn im Text keine offensichtlichen Hörfehler vorliegen, gib ein leeres Array [] zurück.
+
+Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
+{{
+  "corrections": [
+    {{
+      "original": "falscher Begriff wie er im Text steht",
+      "corrected": "korrekter Begriff"
+    }}
+  ]
+}}
 """
                 try:
                     resp = ollama.chat(
@@ -294,31 +309,31 @@ Antworte nur mit den korrigierten Zeilen, ohne Einleitung oder Codeblock:
                         messages=[{"role": "user", "content": prompt}],
                         options={"temperature": 0.1},
                     )
-                    raw_lines = resp["message"]["content"].strip().splitlines()
-                    for line in raw_lines:
-                        line = line.strip()
-                        if line.startswith("[") and "]" in line and ":" in line:
-                            try:
-                                right_bracket = line.find("]")
-                                colon = line.find(":", right_bracket)
-                                if colon != -1:
-                                    ts_raw = line[1:right_bracket].replace("s", "").strip()
-                                    target_sec = float(ts_raw)
-                                    corr_text = line[colon + 1 :].strip()
-                                    for idx in sub_indices:
-                                        if abs(float(segments[idx]["start"]) - target_sec) < 0.5:
-                                            orig_t = segments[idx]["text"]
-                                            if orig_t != corr_text and len(corr_text) > 0:
-                                                print(f"  ✨ [Refiner] '{orig_t}' -> '{corr_text}'")
-                                                segments[idx]["text"] = corr_text
-                                                corrections_count += 1
-                                            break
-                            except Exception:
+                    raw_content = resp["message"]["content"].strip()
+                    if "{" in raw_content and "}" in raw_content:
+                        raw_json = raw_content[raw_content.find("{") : raw_content.rfind("}") + 1]
+                        data = json.loads(raw_json)
+                        corrections = data.get("corrections", [])
+                        for c in corrections:
+                            orig = c.get("original", "").strip()
+                            repl = c.get("corrected", "").strip()
+                            if not orig or not repl or orig.lower() == repl.lower():
                                 continue
+
+                            # Ersetze gezielt in den Segmenten dieses Chunks
+                            replaced_any = False
+                            for s in sub_segments:
+                                text_val = s.get("text", "")
+                                if orig in text_val:
+                                    s["text"] = text_val.replace(orig, repl)
+                                    replaced_any = True
+                            if replaced_any:
+                                print(f"  ✨ [Refiner] '{orig}' -> '{repl}'")
+                                corrections_count += 1
                 except Exception as e:
                     print(f"[NLPAnalyzer] Fehler beim Refinement eines Chunks: {e}")
 
-        print(f"[NLPAnalyzer] Refinement abgeschlossen ({corrections_count} Korrektur(en) vorgenommen).")
+        print(f"[NLPAnalyzer] Refinement abgeschlossen ({corrections_count} gezielte Begriff-Korrektur(en)).")
 
         # Volltext neu aufbauen
         new_text_lines = []
