@@ -17,6 +17,34 @@ class LocalNLPAnalyzer:
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _format_timestamp(seconds: float) -> str:
+        """Formatiert Sekunden in MM:SS oder HH:MM:SS."""
+        secs = int(seconds)
+        mins = secs // 60
+        rem_secs = secs % 60
+        hours = mins // 60
+        rem_mins = mins % 60
+        if hours > 0:
+            return f"{hours:02d}:{rem_mins:02d}:{rem_secs:02d}"
+        return f"{rem_mins:02d}:{rem_secs:02d}"
+
+    @staticmethod
+    def _parse_timestamp(val: Any) -> float:
+        """Parst 'MM:SS' oder float Sekunden."""
+        if isinstance(val, (int, float)):
+            return float(val)
+        val_str = str(val).strip()
+        parts = val_str.split(":")
+        try:
+            if len(parts) == 3:
+                return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+            elif len(parts) == 2:
+                return float(parts[0]) * 60 + float(parts[1])
+            return float(val_str)
+        except ValueError:
+            return 0.0
+
     def map_speaker_names(
         self,
         transcript_data: dict[str, Any],
@@ -61,7 +89,6 @@ class LocalNLPAnalyzer:
         if episode_title:
             context_lines.append(f"- Episode: {episode_title}")
         if episode_description:
-            # Erste 300 Zeichen der Beschreibung falls vorhanden
             clean_desc = episode_description.strip()[:300].replace("\n", " ")
             context_lines.append(f"- Episoden-Beschreibung: {clean_desc}")
         if candidate_hosts:
@@ -95,11 +122,11 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
             resp = ollama.chat(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.1}
+                options={"temperature": 0.1},
             )
             raw = resp["message"]["content"].strip()
             if "{" in raw and "}" in raw:
-                raw_json = raw[raw.find("{"):raw.rfind("}")+1]
+                raw_json = raw[raw.find("{") : raw.rfind("}") + 1]
                 mapping = json.loads(raw_json)
                 if mapping:
                     print(f"[NLPAnalyzer] Erkannte Sprecher-Zuordnung: {mapping}")
@@ -123,19 +150,218 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
 
         return transcript_data
 
+    # =========================================================================
+    # Stufe 1: Themen-Segmentierung (Kapitel & Zeitstempel)
+    # =========================================================================
+
+    def segment_topics(
+        self,
+        transcript_data: dict[str, Any],
+        title: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Erkennt automatisch die Gesprächsthemen und teilt den Podcast in Kapitelblöcke ein."""
+        segments = transcript_data.get("segments", [])
+        if not segments:
+            return []
+
+        # Komprimierte Zeitleiste erzeugen (z.B. alle ~60-90 Sekunden)
+        timeline_entries = []
+        last_t = -100.0
+        for s in segments:
+            start_t = float(s.get("start", 0))
+            if start_t - last_t >= 60.0:
+                spk = s.get("speaker", "Sprecher")
+                text_snippet = s.get("text", "").strip()[:100]
+                ts_str = self._format_timestamp(start_t)
+                timeline_entries.append(f"[{ts_str}] {spk}: {text_snippet}")
+                last_t = start_t
+
+        timeline_text = "\n".join(timeline_entries)
+        episode_title = title or transcript_data.get("audio_file", "Podcast Episode")
+
+        prompt = f"""Du bist ein erfahrener Podcast-Redakteur.
+Hier ist die chronologische Zeitleiste des Podcasts '{episode_title}' mit Zeitstempeln (im Format MM:SS):
+
+{timeline_text}
+
+Aufgabe:
+Erkenne die verschiedenen Gesprächsthemen und teile den Podcast in klare, inhaltliche Kapitel (Themenblöcke) ein.
+Für jedes Thema:
+- Startzeitpunkt ("MM:SS")
+- Endzeitpunkt ("MM:SS")
+- Ein prägnanter Thementitel
+- 1-2 Sätze Kurzbeschreibung
+- 3-5 konkrete Schlüsselwörter / Entitäten (reale Personen, Schiffe, Orte, Marken, Begriffe)
+
+Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
+{{
+  "chapters": [
+    {{
+      "start": "00:00",
+      "end": "12:30",
+      "title": "Intro & Begrüßung",
+      "description": "Geplänkel der Moderatoren über die Woche...",
+      "keywords": ["Begrüßung", "Wetter", "Wochenende"]
+    }}
+  ]
+}}
+"""
+        print(f"[NLPAnalyzer] Erstelle thematische Kapitelübersicht mit '{self.model_name}'...")
+        try:
+            resp = ollama.chat(
+                model=self.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0.2},
+            )
+            raw = resp["message"]["content"].strip()
+            if "{" in raw and "}" in raw:
+                raw_json = raw[raw.find("{") : raw.rfind("}") + 1]
+                data = json.loads(raw_json)
+                chapters = data.get("chapters", [])
+                for c in chapters:
+                    c["start_seconds"] = self._parse_timestamp(c.get("start", 0))
+                    c["end_seconds"] = self._parse_timestamp(c.get("end", 0))
+                if chapters:
+                    print(f"[NLPAnalyzer] {len(chapters)} Kapitel/Themenblöcke identifiziert!")
+                    return chapters
+        except Exception as e:
+            print(f"[NLPAnalyzer] Fehler bei Themen-Segmentierung: {e}")
+
+        return []
+
+    # =========================================================================
+    # Stufe 2: Kontext-verankertes Refinement (Korrektur pro Thema)
+    # =========================================================================
+
+    def refine_topic_segments(
+        self,
+        transcript_data: dict[str, Any],
+        chapters: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Korrigiert phonetische Hörfehler von Whisper gezielt verankert im Thema des jeweiligen Kapitels."""
+        segments = transcript_data.get("segments", [])
+        if not segments or not chapters:
+            return transcript_data
+
+        print(f"[NLPAnalyzer] Starte kontextuelles Refinement für {len(chapters)} Themenblöcke...")
+        corrections_count = 0
+
+        for ch_idx, ch in enumerate(chapters, 1):
+            ch_start = ch.get("start_seconds", 0.0)
+            ch_end = ch.get("end_seconds", float("inf"))
+            ch_title = ch.get("title", f"Thema {ch_idx}")
+            ch_keywords = ", ".join(ch.get("keywords", []))
+
+            # Segmente dieses Kapitels filtern
+            matching_indices = [
+                i for i, s in enumerate(segments)
+                if ch_start <= float(s.get("start", 0)) <= ch_end
+            ]
+
+            if not matching_indices:
+                continue
+
+            # In handlichen Portionen (~30 Segmente) an das LLM schicken
+            chunk_size = 30
+            for chunk_offset in range(0, len(matching_indices), chunk_size):
+                sub_indices = matching_indices[chunk_offset : chunk_offset + chunk_size]
+                chunk_lines = [
+                    f"[{segments[i]['start']:.2f}s] {segments[i].get('speaker', 'Sprecher')}: {segments[i].get('text', '')}"
+                    for i in sub_indices
+                ]
+                chunk_text = "\n".join(chunk_lines)
+
+                prompt = f"""Du bist ein professioneller Audio-Transkript-Korrektor.
+Thema dieses Abschnitts: "{ch_title}"
+Schlüsselbegriffe & Kontext: {ch_keywords}
+
+Hier ist der rohe Whisper-Transkripttext:
+{chunk_text}
+
+Aufgabe:
+Korrigiere ausschließlich offensichtliche phonetische Transkriptions- und Hörfehler von Whisper (z.B. 'Mind-Shift 3' -> 'Mein Schiff 3', falsch verstandene Eigennamen, Schiffsnamen, Marken, Orte oder Fachbegriffe passend zum Thema "{ch_title}").
+
+STRENGE REGELN:
+- Verändere NIEMALS den Satzbau, die Grammatik oder die gesprochene Umgangssprache der Sprecher.
+- Behalte die Zeitstempel und Sprechernamen exakt bei.
+- Gib genau die gleiche Anzahl an Zeilen im selben Format zurück: [Sekundens] Sprecher: Korrigierter Text
+
+Antworte nur mit den korrigierten Zeilen, ohne Einleitung oder Codeblock:
+"""
+                try:
+                    resp = ollama.chat(
+                        model=self.model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        options={"temperature": 0.1},
+                    )
+                    raw_lines = resp["message"]["content"].strip().splitlines()
+                    for line in raw_lines:
+                        line = line.strip()
+                        if line.startswith("[") and "]" in line and ":" in line:
+                            try:
+                                right_bracket = line.find("]")
+                                colon = line.find(":", right_bracket)
+                                if colon != -1:
+                                    ts_raw = line[1:right_bracket].replace("s", "").strip()
+                                    target_sec = float(ts_raw)
+                                    corr_text = line[colon + 1 :].strip()
+                                    for idx in sub_indices:
+                                        if abs(float(segments[idx]["start"]) - target_sec) < 0.5:
+                                            orig_t = segments[idx]["text"]
+                                            if orig_t != corr_text and len(corr_text) > 0:
+                                                print(f"  ✨ [Refiner] '{orig_t}' -> '{corr_text}'")
+                                                segments[idx]["text"] = corr_text
+                                                corrections_count += 1
+                                            break
+                            except Exception:
+                                continue
+                except Exception as e:
+                    print(f"[NLPAnalyzer] Fehler beim Refinement eines Chunks: {e}")
+
+        print(f"[NLPAnalyzer] Refinement abgeschlossen ({corrections_count} Korrektur(en) vorgenommen).")
+
+        # Volltext neu aufbauen
+        new_text_lines = []
+        for s in segments:
+            spk = s.get("speaker")
+            if spk and spk != "UNKNOWN":
+                new_text_lines.append(f"[{s['start']}s - {s['end']}s] {spk}: {s['text']}")
+            else:
+                new_text_lines.append(f"[{s['start']}s - {s['end']}s] {s['text']}")
+
+        transcript_data["segments"] = segments
+        transcript_data["full_text"] = "\n".join(new_text_lines)
+        transcript_data["chapters"] = chapters
+        return transcript_data
+
+    # =========================================================================
+    # Stufe 3: Umfassende Synthese & Analyse
+    # =========================================================================
+
     def analyze_transcript(
         self,
         transcript_data: dict[str, Any],
-        title: str | None = None
+        title: str | None = None,
+        refine_chapters: bool = True,
     ) -> dict[str, Any]:
-        """Führt umfassende NLP-Analysen auf dem Transkript mittels lokalem LLM durch."""
-        text = transcript_data.get("full_text", "")
+        """Führt Themen-Segmentierung, kontextuelles Refinement und die finale NLP-Analyse durch."""
         file_stem = Path(transcript_data.get("audio_file", "podcast")).stem
         episode_title = title or file_stem
 
-        print(f"[NLPAnalyzer] Starte Analyse mit lokalem LLM '{self.model_name}'...")
+        # 1. Themen-Segmentierung & Kapitelmarker
+        chapters = transcript_data.get("chapters")
+        if not chapters:
+            chapters = self.segment_topics(transcript_data, title=episode_title)
 
-        # System Prompt für präzise, strukturierte Analyse
+        # 2. Kontextuelles Refinement pro Kapitel
+        if refine_chapters and chapters:
+            transcript_data = self.refine_topic_segments(transcript_data, chapters)
+
+        text = transcript_data.get("full_text", "")
+
+        print(f"[NLPAnalyzer] Starte finale Synthese mit lokalem LLM '{self.model_name}'...")
+
+        # System Prompt für präzise Analyse
         system_prompt = (
             "Du bist ein fortschrittlicher NLP- und Podcast-Analyst. "
             "Deine Aufgabe ist es, gesprochene Podcast-Transkripte zu analysieren und "
@@ -190,12 +416,11 @@ WICHTIG:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                options={"temperature": 0.3}
+                options={"temperature": 0.3},
             )
 
             raw_content = response["message"]["content"].strip()
 
-            # Bereinigen falls das Modell Markdown-Codeblöcke mitliefert
             if raw_content.startswith("```"):
                 lines = raw_content.splitlines()
                 if lines[0].startswith("```"):
@@ -209,12 +434,15 @@ WICHTIG:
             except json.JSONDecodeError:
                 analysis_result = {
                     "title": episode_title,
-                    "raw_analysis": raw_content
+                    "raw_analysis": raw_content,
                 }
 
         except Exception as e:
             print(f"[NLPAnalyzer] Fehler bei der Ollama-Anfrage: {e}")
             raise
+
+        if chapters:
+            analysis_result["chapters"] = chapters
 
         # Speichern als JSON
         json_report_path = self.output_dir / f"{file_stem}_analysis.json"
@@ -235,6 +463,20 @@ WICHTIG:
 
         if "one_sentence_summary" in data:
             md.append(f"> **TL;DR:** {data['one_sentence_summary']}\n")
+
+        # ⏱️ Kapitelübersicht falls vorhanden
+        if data.get("chapters"):
+            md.append("## ⏱️ Themen- & Kapitelübersicht\n")
+            md.append("| Zeitstempel | Thema | Beschreibung |")
+            md.append("|---|---|---|")
+            for c in data["chapters"]:
+                start_ts = c.get("start", "00:00")
+                end_ts = c.get("end", "")
+                ts_label = f"`{start_ts} - {end_ts}`" if end_ts else f"`{start_ts}`"
+                t_title = c.get("title", "Thema").replace("|", "-")
+                t_desc = c.get("description", "").replace("|", "-")
+                md.append(f"| {ts_label} | **{t_title}** | {t_desc} |")
+            md.append("")
 
         if "detailed_summary" in data:
             md.append("## 📝 Zusammenfassung")

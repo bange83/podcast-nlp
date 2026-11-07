@@ -15,7 +15,7 @@ REPORTS_DIR = DATA_DIR / "reports"
 
 # Standardmodelle
 # Whisper: "tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"
-DEFAULT_WHISPER_MODEL = "small"
+DEFAULT_WHISPER_MODEL = "large-v3-turbo"
 
 # Whisper Compute Type auf macOS / Apple Silicon:
 # "int8" nutzt ARM NEON Vektor-Beschleunigung (3-4x schneller auf M1-M4)

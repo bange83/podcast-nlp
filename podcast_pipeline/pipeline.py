@@ -174,10 +174,15 @@ class PodcastPipeline:
                     episode_title=ep_title,
                     episode_description=ep_desc,
                 )
-                with open(path, "w", encoding="utf-8") as f:
-                    json.dump(transcript_data, f, ensure_ascii=False, indent=2)
-
             self.analyzer.analyze_transcript(transcript_data, title=ep_title)
+
+            # Aktualisiertes Transkript (.json und .txt) mit Kapiteln & Refinement speichern
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(transcript_data, f, ensure_ascii=False, indent=2)
+            txt_path = TRANSCRIPTS_DIR / f"{stem}.txt"
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(transcript_data.get("full_text", ""))
+
             produced.append(report_json)
 
         print(f"\n✅ Analyse abgeschlossen: {len(produced)} Report(s) in {REPORTS_DIR}")
