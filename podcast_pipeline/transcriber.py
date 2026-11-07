@@ -139,8 +139,8 @@ class AudioTranscriber:
 
             speaker_durations = {}
             for turn, _, speaker in cropped.itertracks(yield_label=True):
-                duration = turn.length
-                speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + duration
+                dur = turn.end - turn.start
+                speaker_durations[speaker] = speaker_durations.get(speaker, 0.0) + dur
 
             if speaker_durations:
                 return max(speaker_durations, key=speaker_durations.get)

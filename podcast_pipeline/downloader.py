@@ -1,11 +1,10 @@
-import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+
 import feedparser
 import requests
-from tqdm import tqdm
 from slugify import slugify
+from tqdm import tqdm
 
 from .config import AUDIO_DIR
 
@@ -16,7 +15,7 @@ class PodcastEpisode:
     published: str
     audio_url: str
     description: str
-    local_path: Optional[Path] = None
+    local_path: Path | None = None
 
 
 class PodcastDownloader:
@@ -25,14 +24,14 @@ class PodcastDownloader:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
-    def search_podcasts(query: str, limit: int = 5) -> List[dict]:
+    def search_podcasts(query: str, limit: int = 5) -> list[dict]:
         """Sucht Podcasts über das offene Apple Podcasts / iTunes Verzeichnis."""
         search_url = "https://itunes.apple.com/search"
         params = {
             "term": query,
             "media": "podcast",
             "entity": "podcast",
-            "limit": limit
+            "limit": limit,
         }
         try:
             resp = requests.get(search_url, params=params, timeout=10)
@@ -42,36 +41,44 @@ class PodcastDownloader:
             for item in data.get("results", []):
                 feed_url = item.get("feedUrl")
                 if feed_url:
-                    results.append({
-                        "name": item.get("collectionName"),
-                        "artist": item.get("artistName"),
-                        "feed_url": feed_url,
-                        "track_count": item.get("trackCount", 0)
-                    })
+                    results.append(
+                        {
+                            "name": item.get("collectionName"),
+                            "artist": item.get("artistName"),
+                            "feed_url": feed_url,
+                            "track_count": item.get("trackCount", 0),
+                        }
+                    )
             return results
         except Exception as e:
             print(f"[Downloader] Fehler bei der Podcast-Suche: {e}")
             return []
 
-    def fetch_feed_episodes(self, feed_url: str, limit: int = 5) -> List[PodcastEpisode]:
+    def fetch_feed_episodes(
+        self, feed_url: str, limit: int = 5
+    ) -> list[PodcastEpisode]:
         """Liest einen RSS-Feed ein und gibt Metadaten der neuesten Episoden zurück."""
         feed = feedparser.parse(feed_url)
         if not feed.entries:
             raise ValueError(f"Keine Episoden im RSS-Feed gefunden: {feed_url}")
 
-        episodes: List[PodcastEpisode] = []
+        episodes: list[PodcastEpisode] = []
         for entry in feed.entries[:limit]:
             audio_url = None
             # Enclosures durchsuchen (standardmäßiger Podcast-Audiolink)
             for enclosure in getattr(entry, "enclosures", []):
-                if enclosure.get("type", "").startswith("audio/") or enclosure.get("href", "").endswith((".mp3", ".m4a", ".wav", ".aac")):
+                if enclosure.get("type", "").startswith("audio/") or enclosure.get(
+                    "href", ""
+                ).endswith((".mp3", ".m4a", ".wav", ".aac")):
                     audio_url = enclosure.get("href")
                     break
 
             # Fallback: Links durchsuchen
             if not audio_url:
                 for link in getattr(entry, "links", []):
-                    if link.get("type", "").startswith("audio/") or link.get("href", "").endswith((".mp3", ".m4a", ".wav", ".aac")):
+                    if link.get("type", "").startswith("audio/") or link.get(
+                        "href", ""
+                    ).endswith((".mp3", ".m4a", ".wav", ".aac")):
                         audio_url = link.get("href")
                         break
 
@@ -84,7 +91,7 @@ class PodcastDownloader:
                         title=title,
                         published=published,
                         audio_url=audio_url,
-                        description=description
+                        description=description,
                     )
                 )
 
@@ -110,13 +117,16 @@ class PodcastDownloader:
 
         total_size = int(response.headers.get("content-length", 0))
 
-        with open(target_file, "wb") as f, tqdm(
-            desc=clean_title[:30],
-            total=total_size,
-            unit="B",
-            unit_scale=True,
-            unit_divisor=1024,
-        ) as bar:
+        with (
+            open(target_file, "wb") as f,
+            tqdm(
+                desc=clean_title[:30],
+                total=total_size,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as bar,
+        ):
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     f.write(chunk)
