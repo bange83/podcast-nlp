@@ -54,13 +54,17 @@ class SpeakerAnalyzer:
     # 1. Mathematische & Linguistische Statistiken (Deterministisch)
     # =========================================================================
 
-    def compute_statistics(self, transcript_data: dict[str, Any]) -> dict[str, Any]:
-        """Berechnet Redeanteile, Wortzahlen, Sprechtempo, Monologe und Top-Wörter pro Sprecher."""
+    def compute_statistics(
+        self,
+        transcript_data: dict[str, Any],
+        min_share_percent: float = 5.0,
+    ) -> dict[str, Any]:
+        """Berechnet Redeanteile, Wortzahlen, Sprechtempo, Monologe und Top-Wörter pro Hauptsprecher."""
         segments = transcript_data.get("segments", [])
         if not segments:
             return {}
 
-        # Sprecher identifizieren (ignoriere UNKNOWN oder Werbe-Cluster)
+        # Sprecher identifizieren (ignoriere UNKNOWN oder reine SPEAKER-Placeholder)
         speaker_segments: dict[str, list[dict[str, Any]]] = {}
         for s in segments:
             spk = s.get("speaker")
@@ -68,12 +72,25 @@ class SpeakerAnalyzer:
                 continue
             speaker_segments.setdefault(spk, []).append(s)
 
-        # Nur Sprecher mit mindestens 10 Segmenten betrachten
-        main_speakers = [spk for spk, segs in speaker_segments.items() if len(segs) >= 10]
-        if not main_speakers:
-            main_speakers = list(speaker_segments.keys())
-
+        # Gesamtredezeit über alle Segmente ermitteln
         total_audio_speech_time = sum(float(s.get("end", 0)) - float(s.get("start", 0)) for s in segments)
+
+        # Redezeit pro Sprecher berechnen
+        speaker_durations = {
+            spk: sum(float(s.get("end", 0)) - float(s.get("start", 0)) for s in segs)
+            for spk, segs in speaker_segments.items()
+        }
+
+        # Filter: Nur Hauptsprecher mit mindestens 5% Redeanteil (filtert Werbung, Jingles und Einspieler heraus)
+        main_speakers = [
+            spk for spk, dur in sorted(speaker_durations.items(), key=lambda x: x[1], reverse=True)
+            if (dur / total_audio_speech_time * 100 >= min_share_percent)
+        ]
+        # Falls kein Sprecher 5% erreicht (z.B. bei sehr vielen Gästen), nimm die Top 2
+        if len(main_speakers) < 2:
+            main_speakers = [
+                spk for spk, _ in sorted(speaker_durations.items(), key=lambda x: x[1], reverse=True)[:2]
+            ]
 
         stats: dict[str, Any] = {
             "total_speech_time_seconds": total_audio_speech_time,
@@ -173,7 +190,11 @@ class SpeakerAnalyzer:
         title: str | None = None,
     ) -> dict[str, Any]:
         """Lässt das LLM Persönlichkeits-, Sentiment-, Rollen- und Werteprofile für die Sprecher erstellen."""
-        speakers = list(stats.get("speakers", {}).keys())
+        speakers = sorted(
+            stats.get("speakers", {}).keys(),
+            key=lambda s: stats["speakers"][s]["share_percentage"],
+            reverse=True,
+        )
         if len(speakers) < 2:
             return {}
 
@@ -311,7 +332,11 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         md.append(f"# 🎙️ Sprecher-Analyse: {data.get('title', 'Episode')}\n")
 
         stats = data.get("statistics", {})
-        speakers = list(stats.get("speakers", {}).keys())
+        speakers = sorted(
+            stats.get("speakers", {}).keys(),
+            key=lambda s: stats["speakers"][s]["share_percentage"],
+            reverse=True,
+        )
         profiles = data.get("profiles", {})
 
         if not speakers:
