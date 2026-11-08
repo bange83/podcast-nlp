@@ -113,9 +113,21 @@ class PodcastPipeline:
             json_target = transcripts_dir / f"{path.stem}.json"
 
             if not force and json_target.exists():
-                print(f"[{i}/{len(targets)}] Transkript existiert bereits: {json_target.name}")
-                produced.append(json_target)
-                continue
+                # Prüfen, ob noch Sprecher-Diarization nachgeholt werden muss
+                needs_diarization = False
+                try:
+                    with open(json_target, "r", encoding="utf-8") as jf:
+                        existing = json.load(jf)
+                    spks = {s.get("speaker") for s in existing.get("segments", []) if s.get("speaker")}
+                    if (not existing.get("has_diarization")) or (spks == {"UNKNOWN"}) or ("UNKNOWN" in spks and len(spks) == 1):
+                        needs_diarization = True
+                except Exception:
+                    pass
+
+                if not needs_diarization:
+                    print(f"[{i}/{len(targets)}] Transkript existiert bereits: {json_target.name}")
+                    produced.append(json_target)
+                    continue
 
             print(f"\n[{i}/{len(targets)}] 🎧 Transkribiere {path.name}...")
             self.transcriber.transcribe(

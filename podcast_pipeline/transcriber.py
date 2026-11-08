@@ -1,6 +1,8 @@
 import json
 import platform
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -154,8 +156,26 @@ class AudioTranscriber:
             return None
 
         print(f"[Transcriber] Führe Sprechertrennung (Diarization) für {audio_path.name} durch...")
+        temp_wav: Path | None = None
         try:
-            res: Any = pipeline(str(audio_path))
+            # PyAnnote benötigt für exaktes Chunking 16kHz Mono PCM Audio.
+            # Bei MP3s (insb. Stereo oder VBR) wirft der direkte MP3-Decoder oft Sample-Pufferfehler.
+            if audio_path.suffix.lower() != ".wav":
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+                    temp_wav = Path(tf.name)
+                # Schnelle Konvertierung via ffmpeg (~2s für 70 min Audio)
+                cmd = [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-i", str(audio_path),
+                    "-ac", "1", "-ar", "16000",
+                    str(temp_wav),
+                ]
+                subprocess.run(cmd, check=True)
+                diarize_input = str(temp_wav)
+            else:
+                diarize_input = str(audio_path)
+
+            res: Any = pipeline(diarize_input)
             # PyAnnote 3.1+ gibt DiarizeOutput zurück
             annotation: Any = getattr(res, "speaker_diarization", res)
 
@@ -171,6 +191,12 @@ class AudioTranscriber:
         except Exception as e:
             print(f"[Transcriber] Fehler bei Diarization: {e}")
             return None
+        finally:
+            if temp_wav and temp_wav.exists():
+                try:
+                    temp_wav.unlink()
+                except Exception:
+                    pass
 
     @staticmethod
     def _assign_speaker_to_segment(seg_start: float, seg_end: float, diarization: Any) -> str:
