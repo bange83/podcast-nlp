@@ -207,7 +207,12 @@ class PodcastPipeline:
                     episode_title=ep_title,
                     episode_description=ep_desc,
                 )
-            self.analyzer.analyze_transcript(transcript_data, title=ep_title, output_dir=reports_dir)
+            self.analyzer.analyze_transcript(
+                transcript_data,
+                title=ep_title,
+                output_dir=reports_dir,
+                force_recompute_chapters=force,
+            )
 
             # Aktualisiertes Transkript (.json und .txt) mit Kapiteln speichern
             with open(path, "w", encoding="utf-8") as f:

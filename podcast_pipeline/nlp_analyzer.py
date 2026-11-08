@@ -151,7 +151,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         return transcript_data
 
     # =========================================================================
-    # Stufe 1: Themen-Segmentierung (Kapitel & Zeitstempel)
+    # Stufe 1: Themen-Segmentierung (Kapitel & Zeitstempel mit Detail-Punkten)
     # =========================================================================
 
     def segment_topics(
@@ -159,59 +159,84 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         transcript_data: dict[str, Any],
         title: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Erkennt automatisch die Gesprächsthemen und teilt den Podcast in Kapitelblöcke ein."""
+        """Erkennt automatisch die Gesprächsthemen und teilt den Podcast in detaillierte Kapitelblöcke ein."""
         segments = transcript_data.get("segments", [])
         if not segments:
             return []
 
-        # Komprimierte Zeitleiste erzeugen (z.B. alle ~60-90 Sekunden)
-        timeline_entries = []
-        last_t = -100.0
+        # Dichte Zeitleiste erzeugen: Blöcke alle ~45-50 Sekunden mit realem Text
+        timeline_entries: list[str] = []
+        current_chunk: list[str] = []
+        chunk_start_t = 0.0
+
         for s in segments:
-            start_t = float(s.get("start", 0))
-            if start_t - last_t >= 60.0:
-                spk = s.get("speaker", "Sprecher")
-                text_snippet = s.get("text", "").strip()[:100]
-                ts_str = self._format_timestamp(start_t)
-                timeline_entries.append(f"[{ts_str}] {spk}: {text_snippet}")
-                last_t = start_t
+            t = float(s.get("start", 0))
+            text = s.get("text", "").strip()
+            spk = s.get("speaker", "")
+
+            # Typische Whisper-Halluzinationen auf Stille / Musik filtern
+            low_text = text.lower()
+            if "untertitel" in low_text or "schönein" in low_text or not text:
+                continue
+
+            if not current_chunk:
+                chunk_start_t = t
+
+            line = f"{spk}: {text}" if spk and spk != "UNKNOWN" else text
+            current_chunk.append(line)
+
+            if t - chunk_start_t >= 50.0:
+                ts_str = self._format_timestamp(chunk_start_t)
+                combined = " ".join(current_chunk)
+                # Bis zu 300 Zeichen pro 50-Sekunden-Block für reichhaltigen Kontext
+                timeline_entries.append(f"[{ts_str}] {combined[:300]}...")
+                current_chunk = []
+
+        if current_chunk:
+            ts_str = self._format_timestamp(chunk_start_t)
+            timeline_entries.append(f"[{ts_str}] {' '.join(current_chunk)[:300]}...")
 
         timeline_text = "\n".join(timeline_entries)
         episode_title = title or transcript_data.get("audio_file", "Podcast Episode")
 
-        prompt = f"""Du bist ein erfahrener Podcast-Redakteur.
-Hier ist die chronologische Zeitleiste des Podcasts '{episode_title}' mit Zeitstempeln (im Format MM:SS):
+        prompt = f"""Du bist ein erfahrener Podcast-Redakteur und erstellst eine detaillierte, leserfreundliche Kapitelübersicht für die Episode '{episode_title}'.
 
+Hier ist die chronologische Zeitleiste des Podcasts mit Zeitstempeln (im Format MM:SS oder HH:MM:SS):
 {timeline_text}
 
 Aufgabe:
-Erkenne die verschiedenen Gesprächsthemen und teile den Podcast in klare, inhaltliche Kapitel (Themenblöcke) ein.
-Für jedes Thema:
-- Startzeitpunkt ("MM:SS")
-- Endzeitpunkt ("MM:SS")
-- Ein prägnanter Thementitel
-- 1-2 Sätze Kurzbeschreibung
-- 3-5 konkrete Schlüsselwörter / Entitäten (reale Personen, Schiffe, Orte, Marken, Begriffe)
+Teile den Podcast in ca. 6-10 inhaltlich klar abgegrenzte Kapitel (Themenblöcke) ein.
+WICHTIG für jedes Kapitel:
+- "start" und "end" (Format MM:SS oder HH:MM:SS)
+- "title": Ein aussagekräftiger, unterhaltsamer Thementitel (KEINE generischen Titel wie 'Smalltalk', 'Medien' oder 'Politik')
+- "summary": 1-2 Sätze prägnante Kurzbeschreibung
+- "bullet_points": 3-5 KONKRETE Stichpunkte mit detaillierten Inhalten (Nenne konkrete Personen, Anekdoten, Pointen, Argumente und Meinungen. KEINE allgemeinen Floskeln wie 'Sie sprechen über Themen'!)
+- "keywords": 3-5 konkrete Schlagworte oder Entitäten
 
 Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
 {{
   "chapters": [
     {{
-      "start": "00:00",
-      "end": "12:30",
-      "title": "Intro & Begrüßung",
-      "description": "Geplänkel der Moderatoren über die Woche...",
-      "keywords": ["Begrüßung", "Wetter", "Wochenende"]
+      "start": "05:30",
+      "end": "14:15",
+      "title": "Auf der Bühne mit Fran Lebowitz",
+      "summary": "Jan erzählt von seinem Auftritt als Moderator mit der New Yorker Ikone im Hamburger Schauspielhaus.",
+      "bullet_points": [
+        "Jan wurde überraschend vom US-Management für den Abend im Schauspielhaus Hamburg angefragt.",
+        "Gesetzeslücke ausgenutzt: Lebowitz durfte auf der Bühne rauchen, weil es als Teil der Performance deklariert wurde.",
+        "Anekdoten über ihren Lebensstil: Kein Computer, kein Handy, nur Bücher und New Yorker Biss."
+      ],
+      "keywords": ["Fran Lebowitz", "Schauspielhaus Hamburg", "Rauchen", "New York"]
     }}
   ]
 }}
 """
-        print(f"[NLPAnalyzer] Erstelle thematische Kapitelübersicht mit '{self.model_name}'...")
+        print(f"[NLPAnalyzer] Erstelle detaillierte Kapitelübersicht mit '{self.model_name}'...")
         try:
             resp = ollama.chat(
                 model=self.model_name,
                 messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.2},
+                options={"num_ctx": 16384, "temperature": 0.2},
             )
             raw = resp["message"]["content"].strip()
             if "{" in raw and "}" in raw:
@@ -221,8 +246,10 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
                 for c in chapters:
                     c["start_seconds"] = self._parse_timestamp(c.get("start", 0))
                     c["end_seconds"] = self._parse_timestamp(c.get("end", 0))
+                    if "description" in c and "summary" not in c:
+                        c["summary"] = c["description"]
                 if chapters:
-                    print(f"[NLPAnalyzer] {len(chapters)} Kapitel/Themenblöcke identifiziert!")
+                    print(f"[NLPAnalyzer] {len(chapters)} Kapitel mit Detail-Stichpunkten identifiziert!")
                     return chapters
         except Exception as e:
             print(f"[NLPAnalyzer] Fehler bei Themen-Segmentierung: {e}")
@@ -238,6 +265,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         transcript_data: dict[str, Any],
         title: str | None = None,
         output_dir: Path | None = None,
+        force_recompute_chapters: bool = False,
     ) -> dict[str, Any]:
         """Führt Themen-Segmentierung und die finale NLP-Analyse durch."""
         file_stem = Path(transcript_data.get("audio_file", "podcast")).stem
@@ -245,7 +273,12 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
 
         # Themen-Segmentierung & Kapitelmarker (O-Ton bleibt authentisch erhalten)
         chapters = transcript_data.get("chapters")
-        if not chapters:
+        needs_segmentation = (
+            force_recompute_chapters
+            or not chapters
+            or any("bullet_points" not in c for c in chapters)
+        )
+        if needs_segmentation:
             chapters = self.segment_topics(transcript_data, title=episode_title)
             if chapters:
                 transcript_data["chapters"] = chapters
@@ -266,7 +299,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
 Titel: {episode_title}
 
 --- TRANSKRIPT ANFANG ---
-{text[:24000]}  # Begrenzung für Standard-Kontextfenster
+{text[:48000]}
 --- TRANSKRIPT ENDE ---
 
 Erstelle eine fundierte Analyse und antworte im folgenden JSON-Format:
@@ -309,7 +342,7 @@ WICHTIG:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                options={"temperature": 0.3},
+                options={"num_ctx": 16384, "temperature": 0.3},
             )
 
             raw_content = response["message"]["content"].strip()
@@ -363,16 +396,43 @@ WICHTIG:
         # ⏱️ Kapitelübersicht falls vorhanden
         if data.get("chapters"):
             md.append("## ⏱️ Themen- & Kapitelübersicht\n")
-            md.append("| Zeitstempel | Thema | Beschreibung |")
+            md.append("| Zeitstempel | Thema | Kurzbeschreibung |")
             md.append("|---|---|---|")
             for c in data["chapters"]:
                 start_ts = c.get("start", "00:00")
                 end_ts = c.get("end", "")
                 ts_label = f"`{start_ts} - {end_ts}`" if end_ts else f"`{start_ts}`"
                 t_title = c.get("title", "Thema").replace("|", "-")
-                t_desc = c.get("description", "").replace("|", "-")
+                t_desc = (c.get("summary") or c.get("description", "")).replace("|", "-")
                 md.append(f"| {ts_label} | **{t_title}** | {t_desc} |")
             md.append("")
+
+            # Detaillierte Stichpunkte pro Kapitel
+            has_details = any(c.get("bullet_points") for c in data["chapters"])
+            if has_details:
+                md.append("### 📑 Kapitel-Details\n")
+                for c in data["chapters"]:
+                    start_ts = c.get("start", "00:00")
+                    end_ts = c.get("end", "")
+                    ts_label = f"`{start_ts} - {end_ts}`" if end_ts else f"`{start_ts}`"
+                    t_title = c.get("title", "Kapitel")
+                    t_summary = c.get("summary") or c.get("description", "")
+
+                    md.append(f"#### {ts_label} • {t_title}")
+                    if t_summary:
+                        md.append(f"> {t_summary}\n")
+
+                    bps = c.get("bullet_points", [])
+                    if bps:
+                        md.append("- **Besprochene Punkte & Details:**")
+                        for bp in bps:
+                            md.append(f"  - {bp}")
+
+                    kws = c.get("keywords", [])
+                    if kws:
+                        kw_str = ", ".join(f"`{k}`" for k in kws)
+                        md.append(f"- 🏷️ *Schlagworte:* {kw_str}")
+                    md.append("")
 
         if "detailed_summary" in data:
             md.append("## 📝 Zusammenfassung")
