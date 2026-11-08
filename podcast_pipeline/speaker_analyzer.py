@@ -324,7 +324,160 @@ class SpeakerAnalyzer:
         return stats
 
     # =========================================================================
-    # 2. Psychologische, Rhetorische & Politische Analyse (LLM)
+    # 2. Interaktions-Klassifikation & Diskurs-Alignment (LLM Micro-Batching)
+    # =========================================================================
+
+    def _classify_interactions(
+        self,
+        segments: list[dict[str, Any]],
+        main_speakers: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Klassifiziert Sprecherwechsel & Unterbrechungen via Micro-Batching mit dem lokalen LLM."""
+        takeovers: list[dict[str, Any]] = []
+        for i in range(1, len(segments)):
+            prev_s = segments[i - 1]
+            curr_s = segments[i]
+            spk_prev = prev_s.get("speaker")
+            spk_curr = curr_s.get("speaker")
+            if (
+                spk_prev in main_speakers
+                and spk_curr in main_speakers
+                and spk_prev != spk_curr
+            ):
+                dt = float(curr_s.get("start", 0)) - float(prev_s.get("end", 0))
+                # Schneller Wechsel / Unterbrechung / Latching
+                if dt < 0.6:
+                    prev_txt = prev_s.get("text", "").strip()
+                    curr_txt = curr_s.get("text", "").strip()
+                    if prev_txt and curr_txt:
+                        takeovers.append({
+                            "id": len(takeovers) + 1,
+                            "vorredner": spk_prev,
+                            "vorredner_text": prev_txt[-120:],
+                            "einwurf_sprecher": spk_curr,
+                            "einwurf_text": curr_txt[:120],
+                            "dt": round(dt, 2),
+                        })
+
+        if not takeovers:
+            return {
+                spk: {
+                    "supportive_pct": 50.0,
+                    "steering_pct": 30.0,
+                    "disruptive_pct": 20.0,
+                    "listening_score": 4.0,
+                    "evaluated_count": 0,
+                }
+                for spk in main_speakers
+            }
+
+        # Bis zu 30 repräsentative Takeovers gleichmäßig samplen für blitzschnelle Inferenz
+        max_samples = 30
+        if len(takeovers) > max_samples:
+            step = len(takeovers) / max_samples
+            sampled_takeovers = [takeovers[int(i * step)] for i in range(max_samples)]
+            for idx, item in enumerate(sampled_takeovers, 1):
+                item["id"] = idx
+        else:
+            sampled_takeovers = takeovers
+
+        batch_size = 15
+        evaluations: list[dict[str, Any]] = []
+        print(f"[SpeakerAnalyzer] Klassifiziere {len(sampled_takeovers)} Interaktionen via LLM-Micro-Batching...")
+
+        for b_idx in range(0, len(sampled_takeovers), batch_size):
+            batch = sampled_takeovers[b_idx : b_idx + batch_size]
+            batch_prompt = f"""Du bist ein präziser Konversations- und Diskursanalyst.
+Analysiere die folgenden {len(batch)} Sprecherwechsel und Unterbrechungen:
+{json.dumps(batch, ensure_ascii=False, indent=2)}
+
+Bewerte jeden Wechsel für den 'einwurf_sprecher':
+1. "style":
+   - "supportive" (Zustimmung, Bestärkung, Lachen, Gag oder Satz vervollständigen)
+   - "steering" (Nachhaken, investigative Frage stellen, Thema lenken, neue Facette)
+   - "disruptive" (Gegenargument, Abwürgen/Unterbrechung, Redezeit an sich reißen)
+2. "alignment": Zahl von 1 bis 5 (1 = ignoriert Vorredner komplett / harter Themenwechsel, 3 = lockerer Bezug, 5 = geht direkt und tief auf das Argument des Vorredners ein)
+
+Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Backticks:
+{{
+  "evaluations": [
+    {{"id": 1, "style": "supportive", "alignment": 4}}
+  ]
+}}
+"""
+            try:
+                resp = ollama.chat(
+                    model=self.model_name,
+                    messages=[{"role": "user", "content": batch_prompt}],
+                    options={"temperature": 0.1},
+                )
+                raw = resp["message"]["content"].strip()
+                if "{" in raw and "}" in raw:
+                    raw_json = raw[raw.find("{") : raw.rfind("}") + 1]
+                    parsed = json.loads(raw_json)
+                    evaluations.extend(parsed.get("evaluations", []))
+            except Exception as e:
+                print(f"[SpeakerAnalyzer] Hinweis: Micro-Batch {b_idx // batch_size + 1} nutzte Heuristik-Fallback ({e})")
+
+        eval_by_id = {e.get("id"): e for e in evaluations if "id" in e}
+        speaker_stats: dict[str, dict[str, Any]] = {
+            spk: {"supportive": 0, "steering": 0, "disruptive": 0, "alignments": []}
+            for spk in main_speakers
+        }
+
+        for item in sampled_takeovers:
+            spk = item["einwurf_sprecher"]
+            if spk not in speaker_stats:
+                continue
+
+            ev = eval_by_id.get(item["id"])
+            if ev:
+                st = str(ev.get("style", "supportive")).lower()
+                if "support" in st or "agree" in st:
+                    style = "supportive"
+                elif "steer" in st or "clarif" in st or "quest" in st:
+                    style = "steering"
+                else:
+                    style = "disruptive"
+                align = float(ev.get("alignment", 4.0))
+            else:
+                txt = item["einwurf_text"].lower()
+                if any(w in txt[:25] for w in ("genau", "richtig", "ja", "voll", "klar", "stimmt", "so ist")):
+                    style = "supportive"
+                    align = 4.5
+                elif "?" in txt or any(w in txt[:25] for w in ("warum", "aber", "wie", "was", "wieso")):
+                    style = "steering"
+                    align = 4.0
+                else:
+                    style = "disruptive"
+                    align = 3.2
+
+            speaker_stats[spk][style] += 1
+            speaker_stats[spk]["alignments"].append(align)
+
+        result: dict[str, dict[str, Any]] = {}
+        for spk, data in speaker_stats.items():
+            total_evals = data["supportive"] + data["steering"] + data["disruptive"]
+            if total_evals > 0:
+                s_pct = round((data["supportive"] / total_evals) * 100, 1)
+                st_pct = round((data["steering"] / total_evals) * 100, 1)
+                d_pct = round((data["disruptive"] / total_evals) * 100, 1)
+                avg_align = round(sum(data["alignments"]) / len(data["alignments"]), 1)
+            else:
+                s_pct, st_pct, d_pct, avg_align = 40.0, 40.0, 20.0, 4.0
+
+            result[spk] = {
+                "supportive_pct": s_pct,
+                "steering_pct": st_pct,
+                "disruptive_pct": d_pct,
+                "listening_score": avg_align,
+                "evaluated_count": total_evals,
+            }
+
+        return result
+
+    # =========================================================================
+    # 3. Psychologische, Rhetorische & Politische Analyse (LLM)
     # =========================================================================
 
     def profile_speakers(
@@ -461,7 +614,16 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
             print("[SpeakerAnalyzer] Keine differenzierten Sprecher im Transkript gefunden.")
             return {}
 
-        # 2. LLM Profiling
+        # 2. Interaktions-Klassifikation & Diskurs-Alignment via LLM-Micro-Batching
+        main_spks = list(stats["speakers"].keys())
+        interaction_styles = self._classify_interactions(
+            transcript_data.get("segments", []), main_spks
+        )
+        for spk, style_data in interaction_styles.items():
+            if spk in stats["speakers"]:
+                stats["speakers"][spk]["interaction_style"] = style_data
+
+        # 3. LLM Profiling (angereichert mit Interaktionsstilen & Listening-Scores)
         profiles = self.profile_speakers(transcript_data, stats, title=episode_title)
 
         combined_result = {
@@ -516,6 +678,22 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         md.append("| **Durchschn. Redezeit / Turn** | " + " | ".join(f"{stats['speakers'][s]['avg_turn_seconds']}s" for s in speakers) + " |")
         md.append("| **Fragen gestellt** | " + " | ".join(f"{stats['speakers'][s].get('question_count', 0)} ({stats['speakers'][s].get('question_percentage', 0.0)}%)" for s in speakers) + " |")
         md.append("| **Unterbrechungen (erteilt / erlitten)** | " + " | ".join(f"{stats['speakers'][s].get('interruptions_made', 0)}x / {stats['speakers'][s].get('interruptions_suffered', 0)}x" for s in speakers) + " |")
+
+        # Unterbrechungs-Stil
+        def fmt_style(s):
+            style = stats['speakers'][s].get('interaction_style', {})
+            if not style or style.get('evaluated_count', 0) == 0:
+                return "-"
+            return f"{style['steering_pct']}% *Steer* / {style['supportive_pct']}% *Supp* / {style['disruptive_pct']}% *Disr*"
+        md.append("| **Unterbrechungs-Stil (Steer/Supp/Disr)** | " + " | ".join(fmt_style(s) for s in speakers) + " |")
+
+        # Zuhör- & Resonanz-Score
+        def fmt_listen(s):
+            style = stats['speakers'][s].get('interaction_style', {})
+            score = style.get('listening_score', 0.0)
+            return f"**{score}** / 5.0" if score > 0 else "-"
+        md.append("| **Zuhör- & Resonanz-Score** | " + " | ".join(fmt_listen(s) for s in speakers) + " |")
+
         md.append("| **Wortschatz-Vielfalt (MTLD / TTR)** | " + " | ".join(f"**{stats['speakers'][s].get('mtld_score', 0)}** ({stats['speakers'][s]['lexical_diversity_percent']}% TTR)" for s in speakers) + " |")
         md.append("| **Argumentationsstil (Hedging / Absolutheit)** | " + " | ".join(f"{stats['speakers'][s].get('hedging_percentage', 0.0)}% / {stats['speakers'][s].get('assertion_percentage', 0.0)}%" for s in speakers) + " |")
 
@@ -532,6 +710,9 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         md.append("| **Top-Themenbegriffe (Nicht-Füllwörter)** | " + " | ".join(fmt_content(s) for s in speakers) + " |")
 
         md.append("")
+        md.append("> 💡 **Legende:**  ")
+        md.append("> - **Unterbrechungs-Stil:** *Steer* = Themenlenkung & investigatives Nachhaken; *Supp* = Kooperativ (Zustimmung, Lachen, Satz vollenden); *Disr* = Disruptiv (Widerspruch, Redezeit an sich reißen).  ")
+        md.append("> - **Zuhör- & Resonanz-Score:** **1.0** (Vorredner ignoriert / harter Themenwechsel) bis **5.0** (geht direkt und tief auf das Vorargument ein).\n")
 
         # 2. Beziehungs- und Gesprächsdynamik
         if data.get("chemistry_dynamics"):
