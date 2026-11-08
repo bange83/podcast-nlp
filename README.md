@@ -1,19 +1,29 @@
 # Podcast NLP Pipeline 🎙️🧠
 
-Eine rein lokale Python-Pipeline zum Herunterladen von Podcasts, Transkribieren mit Whisper und Durchführen strukturierter NLP-Analysen mit lokalen Large Language Models (LLMs) via Ollama.
+Eine rein lokale, hardwarebeschleunigte Python-Pipeline zum Herunterladen von Podcasts, Transkribieren mit Whisper und Durchführen tiefgehender NLP- und Konversationsanalysen mit lokalen Large Language Models (LLMs) via Ollama.
 
-## Highlights (v0.2.0)
+## Highlights (v0.3.0)
 
 - **100% Lokal & Privat:** Keine Audiodaten oder Transkripte verlassen Ihren Rechner.
 - **Hardwarebeschleunigung (Apple Silicon GPU & CPU/CUDA):**
   - **Apple Silicon Metal GPU:** Native Unterstützung für `mlx-whisper` auf Apple Silicon Macs (M1–M4) für extrem schnelle Transkriptionen (30–40x Echtzeit).
   - **Multi-Plattform / CPU & CUDA:** Nahtloser Fallback auf `faster-whisper` (CTranslate2 mit ARM NEON int8 oder CUDA) auf Linux, Windows und Intel-Rechnern.
   - **Intelligente Auto-Erkennung:** `--backend auto` wählt automatisch die schnellste Engine für Ihr System.
-- **Schritt 1: Download:** Automatischer Abruf von Episoden aus RSS-Feeds oder per Apple Podcasts Suche inklusive Fortschrittsanzeige und Metadaten-Cache.
-- **Schritt 2: Transkription & Sprechererkennung:** Zeitstempel-Segmentierung und automatische Sprecher-Diarization (Sprechertrennung Jan vs. Olli) via `pyannote.audio` (mit Apple Silicon MPS Beschleunigung).
-- **Schritt 3: Lokale NLP-Analyse:** Themen- und Kapitel-Segmentierung mit Timestamps, Key Takeaways, Zusammenfassungen, Named Entity Recognition (NER) und dynamische Sprechernamen-Auflösung via [Ollama](https://ollama.com/) (z.B. `qwen2.5:14b` oder `dolphin-llama3:8b`).
-- **Schritt 4: Sprecher- & Profiling-Analyse (Optional):** Quantitative Sprecherstatistiken (Redezeit, Wortanzahl, Sprechgeschwindigkeit WPM, längste Monologe, Top-Füllwörter) sowie psychologisches Charakter-, Werte- und Beziehungs-Profiling.
-- **Reports:** Ausgabe sowohl als maschinenlesbares JSON als auch als lesbarer Markdown-Report.
+- **Schritt 1: Download & Nummerierung:** Automatischer Abruf von Episoden aus RSS-Feeds oder per Apple Podcasts Suche. Saubere Strukturierung nach Podcast-Namen und 4-stelliger Episodennummer (z. B. `data/lanz-precht/audio/0270_...mp3`).
+- **Schritt 2: Transkription & Akustische Sprechertrennung:** Robuste Sprecher-Diarization via `pyannote.audio` (mit Apple Silicon MPS-Beschleunigung und automatischer 16 kHz Mono-WAV-Pufferung für fehlerfreie VBR-MP3-Verarbeitung).
+- **Schritt 3: Lückenlose Kapitel & NLP-Analyse:**
+  - Themengetriebene Kapitelblöcke mit Start- und Endzeitstempeln, Kurzbeschreibung, konkreten Stichpunkten (`bullet_points`) und Schlagworten.
+  - Vollständige Episodenabdeckung von `00:00` bis zum Schluss (keine künstlichen Kapitelquoten oder Text-Cutoffs).
+  - TL;DR, detaillierte Zusammenfassung, Key Takeaways und Named Entity Recognition (NER) via [Ollama](https://ollama.com/) (empfohlen: `qwen2.5:14b`).
+- **Schritt 4: Erweiterte Konversations- & Sprecheranalyse (v0.3.0):**
+  - **Quantitative Sprecher-Metriken:** Exakte Redezeit, Wortanzahl, Sprechtempo (WPM), Fragemuster-Quote und längste Monologe.
+  - **Echte akustische Unterbrechungen:** Unterscheidung zwischen ausgeteilten und erlittenen Overlaps direkt aus den PyAnnote-RTTM-Daten.
+  - **Qualitativer Unterbrechungs-Stil (Micro-Batching):** KI-Klassifikation in *Steering* (Themenlenkung/Nachhaken), *Supportive* (Kooperativ/Zustimmung/Gag vollenden) und *Disruptive* (Gegenargument/Abwürgen).
+  - **Zuhör- & Resonanz-Score (Listening Score):** Misst auf einer Skala von 1.0 bis 5.0, wie tief ein Sprecher bei der Übernahme auf das Argument des Vorredners eingeht.
+  - **Duale Wortschatz-Vielfalt (MTLD):** Sowohl *Inhaltswort-MTLD* (reine thematische Fachlexik) als auch *Gesamt-MTLD* (Alltagssprache inklusive rhetorischer Schleifen).
+  - **Gefilterte Themen-Substantive:** Konversationsfloskeln werden entfernt, sodass thematische Kernbegriffe (*Dollar, Trump, Kapitalismus, Film*) hervortreten.
+  - **Psychologisches Profiling:** Archetypen, Rollen, Tonalität, Weltanschauung und Beziehungsdynamik zwischen den Moderatoren.
+- **Reports:** Ausgabe sowohl als maschinenlesbares JSON (`_analysis.json`, `_speakers.json`) als auch als lesbare Markdown-Reports (`_report.md`, `_speakers.md`).
 
 ---
 
@@ -22,19 +32,20 @@ Eine rein lokale Python-Pipeline zum Herunterladen von Podcasts, Transkribieren 
 ```text
 podcast-nlp/
 ├── data/
-│   └── <podcast-name>/     # z. B. fest-flauschig/ (sauber getrennt pro Podcast)
-│       ├── audio/          # Audio-Dateien (z. B. 0718_titel.mp3) & .meta.json
-│       ├── transcripts/    # Transkripte (.json mit Timestamps, .txt & .rttm Diarization)
-│       └── reports/        # Analyse- & Sprecher-Reports (.json & .md)
+│   ├── <podcast-slug>/     # z. B. lanz-precht/, fest-flauschig/, kack-sachgeschichten/
+│   │   ├── audio/          # Audio-Dateien (z. B. 0270_titel.mp3) & .meta.json
+│   │   ├── transcripts/    # Transkripte (.json mit Timestamps, .txt & .rttm Diarization)
+│   │   └── reports/        # Themen- & Sprecher-Reports (.json & .md)
 ├── podcast_pipeline/
 │   ├── __init__.py
-│   ├── config.py          # Modell- & Pfadkonfiguration
-│   ├── downloader.py      # RSS-Feed & Audio-Download
-│   ├── transcriber.py     # Multi-Backend Transkription (mlx-whisper / faster-whisper)
-│   ├── nlp_analyzer.py    # Ollama LLM-Analyse & Themenextraktion
-│   ├── speaker_analyzer.py# Sprecherstatistiken & Charakterprofiling
-│   └── pipeline.py        # Orchestrierung der Pipeline-Schritte
-├── main.py             # CLI-Interface
+│   ├── config.py           # Modell- & Pfadkonfiguration
+│   ├── downloader.py       # RSS-Feed & Audio-Download
+│   ├── transcriber.py      # Multi-Backend Transkription (mlx-whisper / faster-whisper & PyAnnote)
+│   ├── nlp_analyzer.py     # Flexible Themen- & Kapitelanalyse via Ollama
+│   ├── speaker_analyzer.py # Konversationsanalyse, MTLD, Interaktionsstile & Profiling
+│   └── pipeline.py         # End-to-End Orchestrierung & Batching
+├── main.py                 # CLI-Interface
+├── pyproject.toml
 ├── requirements.txt
 └── README.md
 ```
@@ -43,7 +54,7 @@ podcast-nlp/
 
 ## Voraussetzungen
 
-- **Python 3.10+**
+- **Python 3.11 oder 3.12**
 - **FFmpeg** (für die Audioverarbeitung):
 
   ```bash
@@ -54,22 +65,22 @@ podcast-nlp/
 
   ```bash
   brew install ollama
-  # Gewünschtes Modell herunterladen:
-  ollama pull llama3.2
+  # Empfohlenes deutsches Modell herunterladen:
+  ollama pull qwen2.5:14b
   ```
 
 ---
 
-## Sprechererkennung einrichten (Optional, für Jan vs. Olli)
+## Sprechererkennung einrichten (Optional, für Diarization)
 
-Für die Sprechererkennung (`pyannote.audio`) wird ein kostenloser Hugging Face Account benötigt:
+Für die Sprechertrennung (`pyannote.audio`) wird ein kostenloser Hugging Face Account benötigt:
 
 1. Registrieren bei [huggingface.co](https://huggingface.co/)
 2. Nutzungsbedingungen dieser beiden Modelle mit einem Klick akzeptieren:
    - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
    - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
 3. Access Token generieren unter [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (Read-Rechte).
-4. Eine Datei `.env` im Projektordner anlegen (Vorlage `.env.example`):
+4. Eine Datei `.env` im Projektordner anlegen:
 
    ```bash
    cp .env.example .env
@@ -81,9 +92,9 @@ Für die Sprechererkennung (`pyannote.audio`) wird ein kostenloser Hugging Face 
 
 ---
 
-## Installation & Ausführung mit uv (Empfohlen)
+## Installation & Ausführung
 
-Mit [`uv`](https://docs.astral.sh/uv/) geht die Einrichtung blitzschnell und ohne Abhängigkeitskonflikte (nutzt automatisch die passende Python 3.11/3.12 Version mit vorkompilierten PyTorch/Whisper-Wheels):
+Mit [`uv`](https://docs.astral.sh/uv/) (empfohlen für maximale Geschwindigkeit):
 
 ```bash
 cd /Volumes/Samsung990/git/podcast-nlp
@@ -92,87 +103,82 @@ cd /Volumes/Samsung990/git/podcast-nlp
 uv sync
 
 # 2. Pipeline direkt über uv ausführen:
-uv run main.py --search "Fest & Flauschig" --limit 1
+uv run python main.py download --search "Lanz & Precht" --limit 1
 ```
 
 Alternativ klassisch mit venv:
 
 ```bash
-uv venv --python 3.12
+python3 -m venv .venv
 source .venv/bin/activate
-uv pip install -r requirements.txt
-python3 main.py --search "Fest & Flauschig" --limit 1
+pip install -r requirements.txt
+python main.py download --search "Lanz & Precht" --limit 1
 ```
 
 ---
 
 ## Benutzung
 
-Das Skript ist modular aufgebaut: Sie können die drei Phasen (Download, Transkription, NLP-Analyse) komplett getrennt voneinander oder in einem Rutsch ausführen.
+Das CLI ist modular aufgebaut: Sie können die Phasen komplett getrennt voneinander oder in einem Rutsch ausführen.
 
 ### 1. Schritt: Episoden herunterladen (`download`)
-Lädt z. B. mehrere Episoden im Hintergrund herunter und speichert Audio-Dateien sowie deren Metadaten in `data/audio/`:
+Lädt Episoden herunter und legt sie strukturiert unter `data/<podcast>/audio/<NNNN>_<slug>.mp3` ab:
 
 ```bash
-# Nach Podcast-Namen suchen und die neuesten 3 Episoden herunterladen:
-python3 main.py download --search "Fest & Flauschig" --limit 3
+# Nach Podcast-Namen suchen und die neueste Folge herunterladen:
+python main.py download --search "Lanz & Precht" --limit 1
+
+# Oder nach anderen Podcasts suchen:
+python main.py download --search "Fest & Flauschig" --limit 1
+python main.py download --search "Kack & Sachgeschichten" --limit 1
 
 # Oder direkt per RSS-Feed:
-python3 main.py download --feed "https://feeds.megaphone.fm/GLT4060321204" --limit 5
+python main.py download --feed "https://feeds.megaphone.fm/GLT4060321204" --limit 3
 ```
 
-### 2. Schritt: Transkription & Sprechererkennung (`transcribe`)
-Verarbeitet alle heruntergeladenen Audio-Dateien in `data/audio/`, die noch kein Transkript haben (Batch-Modus):
+### 2. Schritt: Transkription & Diarization (`transcribe`)
+Verarbeitet alle Audiodateien, die noch kein Transkript haben (oder holt fehlende Sprecher-Diarization nach):
 
 ```bash
-# Alle noch nicht transkribierten Episoden im Batch abarbeiten (Standard: --backend auto):
-python3 main.py transcribe
+# Batch-Modus über alle Podcasts (Standard: --backend auto):
+python main.py transcribe
 
-# Explizit das Apple Silicon GPU Metal-Backend anfordern:
-python3 main.py transcribe --backend mlx
-
-# Oder auf CPU/CUDA mit CTranslate2 (faster-whisper) zwingen:
-python3 main.py transcribe --backend faster-whisper
+# Explizit Metal GPU Beschleunigung auf Apple Silicon anfordern:
+python main.py transcribe --backend mlx
 
 # Gezielt eine einzelne Datei transkribieren:
-python3 main.py transcribe --file data/audio/meine_aufnahme.mp3
-
-# Mit angepasster Modellgröße oder Threads:
-python3 main.py transcribe --whisper-model large-v3-turbo --threads 8
+python main.py transcribe --file data/lanz-precht/audio/0270_...mp3
 ```
 
-### 3. Schritt: LLM-Analyse & Reports (`analyze`)
-Liest die Transkripte aus `data/transcripts/`, ordnet Sprechernamen zu und erzeugt strukturierte Markdown- & JSON-Reports in `data/reports/`:
+### 3. Schritt: Themen- & Kapitel-Analyse (`analyze`)
+Generiert die lückenlose Kapitelübersicht samt Zusammenfassungen, Key Takeaways und Entitäten:
 
 ```bash
-# Alle Transkripte analysieren, die noch keinen Report haben:
-python3 main.py analyze
+# Alle Transkripte im Batch analysieren (Standard: qwen2.5:14b):
+python main.py analyze --model qwen2.5:14b
 
-# Mit einem anderen lokalen Ollama-Modell:
-python3 main.py analyze --model llama3.2
-
-# Nur eine bestimmte Transkript-Datei analysieren:
-python3 main.py analyze --file data/transcripts/meine_episode.json
+# Einzelnes Transkript neu generieren:
+python main.py analyze --file data/lanz-precht/transcripts/0270_...json --force
 ```
 
-### 4. Optional: Detaillierte Sprecher-Analyse (`speakers`)
-Erstellt für fertige Transkripte eine tiefgehende quantitative Statistik (Redeanteile, Wortzahlen, Sprechtempo in WPM, längste Monologe, Top-Füllwörter) sowie ein psychologisches Charakter-, Werte- und Beziehungs-Profiling via LLM:
+### 4. Schritt: Erweiterte Sprecher- & Konversations-Analyse (`speakers`)
+Erstellt die quantitative Sprecher-Statistik (WPM, Fragemuster, Unterbrechungen, MTLD, Top-Themenwörter), klassifiziert Interaktionsstile via Micro-Batching und erstellt das psychologische Profil:
 
 ```bash
-# Alle vorhandenen Transkripte analysieren:
-python3 main.py speakers
+# Alle Sprecher-Reports im Batch generieren:
+python main.py speakers --model qwen2.5:14b
 
-# Mit spezifischem Modell (z.B. Qwen 2.5 14B):
-python3 main.py speakers --model qwen2.5:14b
+# Einzelne Folge analysieren oder mit --force neu berechnen:
+python main.py speakers --file data/lanz-precht/transcripts/0270_...json --force
 ```
 
 ---
 
-### Alternative: Alles in einem Rutsch (`run`)
-Falls Sie eine Episode sofort von A bis Z durchlaufen lassen möchten:
+### End-to-End Orchestrierung (`run`)
+Führt alle Schritte (Download, Transkription, NLP-Kapitelanalyse, Sprecher-Profiling) in einem einzigen Aufruf aus:
 
 ```bash
-python3 main.py run --search "Fest & Flauschig" --limit 1
+python main.py run --search "Lanz & Precht" --limit 1 --model qwen2.5:14b
 ```
 
 ---
