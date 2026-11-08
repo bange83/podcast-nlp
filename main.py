@@ -110,7 +110,7 @@ Beispiele:
     g_run.add_argument("--feed", "-f", type=str, help="URL des Podcast-RSS-Feeds")
     g_run.add_argument("--file", "-i", type=str, help="Pfad zu lokaler Audiodatei")
     p_run.add_argument("--limit", "-n", type=int, default=1, help="Anzahl der Episoden (Standard: 1)")
-    p_run.add_argument("--llm-model", "-m", type=str, default=DEFAULT_OLLAMA_MODEL, help=f"Ollama Modellname (Standard: {DEFAULT_OLLAMA_MODEL})")
+    p_run.add_argument("--model", "--llm-model", "-m", dest="model", type=str, default=DEFAULT_OLLAMA_MODEL, help=f"Ollama Modellname (Standard: {DEFAULT_OLLAMA_MODEL})")
     p_run.add_argument("--force", action="store_true", help="Erzwingt Neuberechnung aller Schritte")
     add_common_transcribe_args(p_run)
 
@@ -122,7 +122,7 @@ Beispiele:
     parser.add_argument("--feed", "-f", type=str, help=argparse.SUPPRESS)
     parser.add_argument("--file", "-i", type=str, help=argparse.SUPPRESS)
     parser.add_argument("--limit", "-n", type=int, default=1, help=argparse.SUPPRESS)
-    parser.add_argument("--llm-model", "-m", type=str, default=DEFAULT_OLLAMA_MODEL, help=argparse.SUPPRESS)
+    parser.add_argument("--model", "--llm-model", "-m", dest="model", type=str, default=DEFAULT_OLLAMA_MODEL, help=argparse.SUPPRESS)
     parser.add_argument("--force", action="store_true", help=argparse.SUPPRESS)
     add_common_transcribe_args(parser)
 
@@ -196,7 +196,7 @@ def main():
         lang_arg = getattr(args, "language", None)
         wmodel_arg = getattr(args, "whisper_model", DEFAULT_WHISPER_MODEL)
         backend_arg = getattr(args, "backend", DEFAULT_TRANSCRIBER_BACKEND)
-        omodel_arg = getattr(args, "llm_model", DEFAULT_OLLAMA_MODEL)
+        omodel_arg = getattr(args, "model", None) or getattr(args, "llm_model", DEFAULT_OLLAMA_MODEL)
         token_arg = getattr(args, "hf_token", HF_TOKEN)
         threads_arg = getattr(args, "threads", 8)
 
