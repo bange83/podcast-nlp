@@ -27,6 +27,31 @@ Eine rein lokale, hardwarebeschleunigte Python-Pipeline zum Herunterladen von Po
 
 ---
 
+## 📊 Showcases & Beispiel-Reports
+
+Vollständige, generierte Beispiel-Auswertungen aus realen Podcast-Episoden sind im Ordner [`examples/`](./examples) abgelegt:
+
+- **Lanz & Precht (Ausgabe #270):**
+  - [🎙️ Sprecher- & Konversations-Report](./examples/lanz-precht_0270_speakers.md) *(Quantitativ, Unterbrechungsstile, Zuhör-Score & psychologische Profile)*
+  - [⏱️ Themen- & Kapitel-Report](./examples/lanz-precht_0270_chapters.md) *(Lückenlose Zeitstempel, TL;DR, Bullet Points & Entitäten)*
+- **Fest & Flauschig (Auf einen Blunt mit Selenskyj):**
+  - [🎙️ Sprecher- & Konversations-Report](./examples/fest-flauschig_0719_speakers.md) *(Jan Böhmermann vs. Olli Schulz: 247 WPM, 78% disruptive Anekdoten)*
+- **Kack & Sachgeschichten (Folge #368):**
+  - [🎙️ Sprecher- & Konversations-Report](./examples/kack-sachgeschichten_0368_speakers.md) *(Freddy vs. Tobi: Ping-Pong-Dynamik, 58% supportive interruptions)*
+
+### Preview: Was die Sprecheranalyse liefert (Lanz vs. Precht)
+
+| Metrik | **Markus Lanz** | **Richard David Precht** | Was die KI daraus liest |
+|---|---|---|---|
+| **Sprechtempo** | **166.8** WPM | **183.6** WPM | Precht formuliert schneller; Lanz setzt gezieltere Pausen. |
+| **Zuhör- & Resonanz-Score** | **4.1** / 5.0 | **3.0** / 5.0 | Lanz greift Prechts Thesen direkt auf; Precht wechselt häufiger auf Meta-Ebene. |
+| **Unterbrechungs-Stil** | 33% Steer / **67% Supp** | **60% Steer** / 27% Supp / 13% Disr | Lanz bestärkt & hakt nach; Precht lenkt aktiv den Diskurs. |
+| **Wortschatz-Vielfalt (MTLD Inhalt)** | **418.3** | **456.9** | Prechts Wortschatz bei echten Inhaltswörtern (thematische Tiefe) ist messbar breiter. |
+| **Wortschatz-Vielfalt (MTLD Gesamt)** | **118.6** | **88.7** | *MTLD-Paradox:* Im Gesamtwortschatz wiederholt Precht Denkfloskeln (*"ja"*, *"das ist das Ding"*). |
+| **Top-Themenwörter** | `Dollar`, `Trump`, `Milliarden` | `Trump`, `Kapitalismus`, `Bevölkerung` | Lanz quantifiziert das Geld; Precht analysiert das gesellschaftliche System. |
+
+---
+
 ## Projektstruktur
 
 ```text
