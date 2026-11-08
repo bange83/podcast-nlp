@@ -292,8 +292,10 @@ class SpeakerAnalyzer:
             content_counts = Counter(content_words)
             top_content_words = [{"word": w, "count": c} for w, c in content_counts.most_common(8)]
 
-            # Lexikalische Vielfalt: Längenunabhängiges MTLD & klassische TTR
-            mtld_score = self._compute_mtld(words_lower)
+            # Lexikalische Vielfalt: Längenunabhängiges MTLD (Gesamt & Inhaltswörter) & klassische TTR
+            mtld_total = self._compute_mtld(words_lower)
+            content_words_for_mtld = [w for w in words_lower if w not in GERMAN_STOPWORDS]
+            mtld_content = self._compute_mtld(content_words_for_mtld)
             unique_words = len(set(words_lower))
             ttr = round((unique_words / total_words) * 100, 1) if total_words > 0 else 0.0
 
@@ -311,7 +313,8 @@ class SpeakerAnalyzer:
                 "question_percentage": question_pct,
                 "interruptions_made": interruptions_made.get(spk, 0),
                 "interruptions_suffered": interruptions_suffered.get(spk, 0),
-                "mtld_score": mtld_score,
+                "mtld_score": mtld_total,
+                "mtld_content_score": mtld_content,
                 "lexical_diversity_percent": ttr,
                 "hedging_count": hedging_count,
                 "hedging_percentage": hedging_pct,
@@ -694,7 +697,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
             return f"**{score}** / 5.0" if score > 0 else "-"
         md.append("| **Zuhör- & Resonanz-Score** | " + " | ".join(fmt_listen(s) for s in speakers) + " |")
 
-        md.append("| **Wortschatz-Vielfalt (MTLD / TTR)** | " + " | ".join(f"**{stats['speakers'][s].get('mtld_score', 0)}** ({stats['speakers'][s]['lexical_diversity_percent']}% TTR)" for s in speakers) + " |")
+        md.append("| **Wortschatz-Vielfalt (MTLD Inhalt / Gesamt)** | " + " | ".join(f"**{stats['speakers'][s].get('mtld_content_score', 0)}** ({stats['speakers'][s].get('mtld_score', 0)} gesamt)" for s in speakers) + " |")
         md.append("| **Argumentationsstil (Hedging / Absolutheit)** | " + " | ".join(f"{stats['speakers'][s].get('hedging_percentage', 0.0)}% / {stats['speakers'][s].get('assertion_percentage', 0.0)}%" for s in speakers) + " |")
 
         # Top Füllwörter
@@ -711,6 +714,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
 
         md.append("")
         md.append("> 💡 **Legende:**  ")
+        md.append("> - **Wortschatz-Vielfalt (MTLD):** Measure of Textual Lexical Diversity. **Inhalt** filtert Funktionswörter heraus und spiegelt den echten thematischen Wortschatz wider (höher = reichhaltigere Fachbegriffe). **Gesamt** erfasst die Token-Vielfalt inklusive rhetorischer Schleifen und Partikeln der Alltagssprache.  ")
         md.append("> - **Unterbrechungs-Stil:** *Steer* = Themenlenkung & investigatives Nachhaken; *Supp* = Kooperativ (Zustimmung, Lachen, Satz vollenden); *Disr* = Disruptiv (Widerspruch, Redezeit an sich reißen).  ")
         md.append("> - **Zuhör- & Resonanz-Score:** **1.0** (Vorredner ignoriert / harter Themenwechsel) bis **5.0** (geht direkt und tief auf das Vorargument ein).\n")
 
