@@ -201,10 +201,20 @@ python main.py speakers --file data/lanz-precht/transcripts/0270_...json --force
 ---
 
 ### End-to-End Orchestrierung (`run`)
-Führt alle Schritte (Download, Transkription, NLP-Kapitelanalyse, Sprecher-Profiling) in einem einzigen Aufruf aus:
+Führt alle 4 Schritte (Download, Transkription & Diarization, NLP-Kapitelanalyse, Sprecher-Profiling) in einem einzigen Aufruf aus:
 
 ```bash
-python main.py run --search "Lanz & Precht" --limit 1 --model qwen2.5:14b
+# Mit uv (empfohlen):
+uv run python main.py run --search "Lanz & Precht" --limit 1
+
+# Klassisch mit aktiviertem venv:
+python main.py run --search "Lanz & Precht" --limit 1
+
+# Anderen Podcast suchen oder explizites Modell angeben (Standard: qwen2.5:14b):
+uv run python main.py run --search "Krewkast" --limit 1 --model qwen2.5:14b
+
+# Lokale Audiodatei direkt komplett verarbeiten:
+uv run python main.py run --file data/lanz-precht/audio/0270_...mp3
 ```
 
 ---

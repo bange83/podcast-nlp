@@ -410,11 +410,24 @@ class PodcastPipeline:
                 output_dir=reports_dir,
             )
 
+            # Stufe 4: Sprecher- & Konversations-Analyse (falls Diarization vorhanden)
+            speaker_data = None
+            if transcript_data.get("has_diarization"):
+                print("\n🎙️ 4. Sprecher- & Konversationsanalyse...")
+                rttm_file = audio_path.parent.parent / "transcripts" / f"{audio_path.stem}.rttm"
+                speaker_data = self.speaker_analyzer.run_analysis(
+                    transcript_data,
+                    title=ep.title,
+                    output_dir=reports_dir,
+                    rttm_path=rttm_file if rttm_file.exists() else None,
+                )
+
             results.append({
                 "episode": ep.title,
                 "audio_path": str(audio_path),
                 "transcript": transcript_data,
                 "analysis": analysis_data,
+                "speakers": speaker_data,
             })
 
         return results
@@ -451,8 +464,20 @@ class PodcastPipeline:
             output_dir=reports_dir,
         )
 
+        speaker_data = None
+        if transcript_data.get("has_diarization"):
+            print("\n🎙️ 4. Sprecher- & Konversationsanalyse...")
+            rttm_file = audio_path.parent.parent / "transcripts" / f"{audio_path.stem}.rttm"
+            speaker_data = self.speaker_analyzer.run_analysis(
+                transcript_data,
+                title=title or audio_path.stem,
+                output_dir=reports_dir,
+                rttm_path=rttm_file if rttm_file.exists() else None,
+            )
+
         return {
             "audio_path": str(audio_path),
             "transcript": transcript_data,
             "analysis": analysis_data,
+            "speakers": speaker_data,
         }
