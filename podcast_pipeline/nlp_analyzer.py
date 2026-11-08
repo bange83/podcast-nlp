@@ -237,6 +237,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         self,
         transcript_data: dict[str, Any],
         title: str | None = None,
+        output_dir: Path | None = None,
     ) -> dict[str, Any]:
         """Führt Themen-Segmentierung und die finale NLP-Analyse durch."""
         file_stem = Path(transcript_data.get("audio_file", "podcast")).stem
@@ -336,13 +337,16 @@ WICHTIG:
         if chapters:
             analysis_result["chapters"] = chapters
 
+        target_dir = output_dir or self.output_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+
         # Speichern als JSON
-        json_report_path = self.output_dir / f"{file_stem}_analysis.json"
+        json_report_path = target_dir / f"{file_stem}_analysis.json"
         with open(json_report_path, "w", encoding="utf-8") as f:
             json.dump(analysis_result, f, ensure_ascii=False, indent=2)
 
         # Zusätzlich als schöner Markdown-Report speichern
-        md_report_path = self.output_dir / f"{file_stem}_report.md"
+        md_report_path = target_dir / f"{file_stem}_report.md"
         self._save_markdown_report(analysis_result, md_report_path)
 
         print(f"[NLPAnalyzer] Analyse abgeschlossen! Gespeichert unter:\n  -> {json_report_path}\n  -> {md_report_path}")

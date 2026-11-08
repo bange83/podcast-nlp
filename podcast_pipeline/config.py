@@ -9,9 +9,42 @@ load_dotenv()
 # Basis-Pfade
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
+
+# Standard-Verzeichnisse (Fallback / Abwärtskompatibilität)
 AUDIO_DIR = DATA_DIR / "audio"
 TRANSCRIPTS_DIR = DATA_DIR / "transcripts"
 REPORTS_DIR = DATA_DIR / "reports"
+
+
+def get_podcast_dir(podcast_name: str | None = None) -> Path:
+    """Gibt das Basis-Verzeichnis für einen Podcast zurück (z.B. data/fest-und-flauschig/)."""
+    from slugify import slugify
+
+    slug = slugify(podcast_name, max_length=50) if podcast_name else "default"
+    d = DATA_DIR / slug
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def get_podcast_audio_dir(podcast_name: str | None = None) -> Path:
+    """Gibt das Audio-Verzeichnis für einen Podcast zurück (data/<podcast>/audio/)."""
+    d = get_podcast_dir(podcast_name) / "audio"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def get_podcast_transcripts_dir(podcast_name: str | None = None) -> Path:
+    """Gibt das Transkript-Verzeichnis für einen Podcast zurück (data/<podcast>/transcripts/)."""
+    d = get_podcast_dir(podcast_name) / "transcripts"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def get_podcast_reports_dir(podcast_name: str | None = None) -> Path:
+    """Gibt das Report-Verzeichnis für einen Podcast zurück (data/<podcast>/reports/)."""
+    d = get_podcast_dir(podcast_name) / "reports"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 # Standardmodelle
 # Whisper: "tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"

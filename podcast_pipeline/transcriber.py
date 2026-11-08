@@ -126,7 +126,12 @@ class AudioTranscriber:
 
     def _run_diarization(self, audio_path: Path) -> Any:
         """Führt Sprechererkennung auf der Audiodatei durch und cacht das RTTM-Ergebnis."""
-        rttm_path = self.output_dir / f"{audio_path.stem}.rttm"
+        if audio_path.parent.name == "audio":
+            transcripts_dir = audio_path.parent.parent / "transcripts"
+        else:
+            transcripts_dir = self.output_dir
+        transcripts_dir.mkdir(parents=True, exist_ok=True)
+        rttm_path = transcripts_dir / f"{audio_path.stem}.rttm"
         if rttm_path.exists():
             try:
                 from pyannote.core import Annotation, Segment
@@ -362,9 +367,15 @@ class AudioTranscriber:
         force_recompute: bool = False,
     ) -> dict[str, Any]:
         """Transkribiert eine Audiodatei und ordnet optional Sprecher (z.B. Jan vs Olli) zu."""
+        if audio_path.parent.name == "audio":
+            out_dir = audio_path.parent.parent / "transcripts"
+        else:
+            out_dir = self.output_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+
         stem = audio_path.stem
-        json_path = self.output_dir / f"{stem}.json"
-        txt_path = self.output_dir / f"{stem}.txt"
+        json_path = out_dir / f"{stem}.json"
+        txt_path = out_dir / f"{stem}.txt"
 
         if not force_recompute and json_path.exists() and txt_path.exists():
             with open(json_path, "r", encoding="utf-8") as f:

@@ -9,12 +9,13 @@ venv/
 .venv/
 ENV/
 
-# Project Data (audio files, transcripts, generated reports)
-data/audio/*
+# Project Data (audio files, transcripts, generated reports across all podcasts)
+data/*
+!data/audio/
 !data/audio/.gitkeep
-data/transcripts/*
+!data/transcripts/
 !data/transcripts/.gitkeep
-data/reports/*
+!data/reports/
 !data/reports/.gitkeep
 
 # Models / Cache

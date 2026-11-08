@@ -293,6 +293,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         self,
         transcript_data: dict[str, Any],
         title: str | None = None,
+        output_dir: Path | None = None,
     ) -> dict[str, Any]:
         """Führt quantitative Statistik und qualitative LLM-Charakteranalyse durch und speichert Reports."""
         file_stem = Path(transcript_data.get("audio_file", "podcast")).stem
@@ -314,13 +315,16 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
             "chemistry_dynamics": profiles.get("chemistry_dynamics", ""),
         }
 
+        target_dir = output_dir or self.output_dir
+        target_dir.mkdir(parents=True, exist_ok=True)
+
         # JSON Report speichern
-        json_path = self.output_dir / f"{file_stem}_speakers.json"
+        json_path = target_dir / f"{file_stem}_speakers.json"
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(combined_result, f, ensure_ascii=False, indent=2)
 
         # Markdown Report speichern
-        md_path = self.output_dir / f"{file_stem}_speakers.md"
+        md_path = target_dir / f"{file_stem}_speakers.md"
         self._save_markdown_report(combined_result, md_path)
 
         print(f"\n✅ Sprecher-Analyse abgeschlossen! Gespeichert unter:\n  -> {json_path}\n  -> {md_path}")

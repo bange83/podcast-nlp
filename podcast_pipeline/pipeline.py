@@ -4,6 +4,7 @@ from typing import Any
 
 from .config import (
     AUDIO_DIR,
+    DATA_DIR,
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_TRANSCRIBER_BACKEND,
     DEFAULT_WHISPER_MODEL,
@@ -77,7 +78,7 @@ class PodcastPipeline:
             path = self.downloader.download_episode(ep)
             downloaded.append(path)
 
-        print(f"\n✅ Download abgeschlossen: {len(downloaded)} Datei(en) in {AUDIO_DIR}")
+        print(f"\n✅ Download abgeschlossen: {len(downloaded)} Datei(en) gespeichert.")
         return downloaded
 
     def transcribe_batch(
@@ -86,24 +87,31 @@ class PodcastPipeline:
         language: str | None = None,
         force: bool = False,
     ) -> list[Path]:
-        """Schritt 2: Transkribiert einzelne oder alle Audiodateien in data/audio/ (Batch)."""
+        """Schritt 2: Transkribiert einzelne oder alle Audiodateien (Batch über data/<podcast>/audio/)."""
         if audio_file:
             if not audio_file.exists():
                 raise FileNotFoundError(f"Audiodatei nicht gefunden: {audio_file}")
             targets = [audio_file]
         else:
             extensions = {".mp3", ".m4a", ".wav", ".aac", ".flac"}
-            if not AUDIO_DIR.exists():
-                print(f"[Pipeline] Audio-Verzeichnis {AUDIO_DIR} existiert noch nicht.")
-                return []
-            targets = sorted([f for f in AUDIO_DIR.iterdir() if f.suffix.lower() in extensions])
+            # Durchsuche alle data/<podcast>/audio/ sowie legacy data/audio/
+            targets = sorted([
+                f for f in DATA_DIR.rglob("*.*")
+                if f.parent.name == "audio" and f.suffix.lower() in extensions
+            ])
             if not targets:
-                print(f"[Pipeline] Keine Audiodateien in {AUDIO_DIR} gefunden.")
+                print(f"[Pipeline] Keine Audiodateien in {DATA_DIR} gefunden.")
                 return []
 
         produced = []
         for i, path in enumerate(targets, 1):
-            json_target = TRANSCRIPTS_DIR / f"{path.stem}.json"
+            if path.parent.name == "audio":
+                transcripts_dir = path.parent.parent / "transcripts"
+            else:
+                transcripts_dir = TRANSCRIPTS_DIR
+            transcripts_dir.mkdir(parents=True, exist_ok=True)
+            json_target = transcripts_dir / f"{path.stem}.json"
+
             if not force and json_target.exists():
                 print(f"[{i}/{len(targets)}] Transkript existiert bereits: {json_target.name}")
                 produced.append(json_target)
@@ -117,7 +125,7 @@ class PodcastPipeline:
             )
             produced.append(json_target)
 
-        print(f"\n✅ Transkription abgeschlossen: {len(produced)} Datei(en) in {TRANSCRIPTS_DIR}")
+        print(f"\n✅ Transkription abgeschlossen: {len(produced)} Datei(en)")
         return produced
 
     def analyze_batch(
@@ -125,28 +133,36 @@ class PodcastPipeline:
         transcript_file: Path | None = None,
         force: bool = False,
     ) -> list[Path]:
-        """Schritt 3: Führt LLM-Analysen für Transkripte in data/transcripts/ durch (Batch)."""
+        """Schritt 3: Führt LLM-Analysen für Transkripte in data/<podcast>/transcripts/ durch (Batch)."""
         if transcript_file:
             if not transcript_file.exists():
                 raise FileNotFoundError(f"Transkriptdatei nicht gefunden: {transcript_file}")
-            # Falls eine .txt Datei angegeben wurde, bevorzugen wir die zugehörige .json (enthält Zeitstempel & Segmente)
+            # Falls eine .txt Datei angegeben wurde, bevorzugen wir die zugehörige .json
             if transcript_file.suffix == ".txt" and transcript_file.with_suffix(".json").exists():
                 transcript_file = transcript_file.with_suffix(".json")
             targets = [transcript_file]
         else:
-            if not TRANSCRIPTS_DIR.exists():
-                print(f"[Pipeline] Transkript-Verzeichnis {TRANSCRIPTS_DIR} existiert noch nicht.")
-                return []
-            targets = sorted(TRANSCRIPTS_DIR.glob("*.json"))
+            targets = sorted([
+                f for f in DATA_DIR.rglob("*.json")
+                if f.parent.name == "transcripts" and not f.name.endswith(".meta.json")
+            ])
             if not targets:
-                print(f"[Pipeline] Keine Transkripte in {TRANSCRIPTS_DIR} gefunden.")
+                print(f"[Pipeline] Keine Transkripte in {DATA_DIR} gefunden.")
                 return []
 
         produced = []
         for i, path in enumerate(targets, 1):
             stem = path.stem
-            report_json = REPORTS_DIR / f"{stem}_analysis.json"
-            report_md = REPORTS_DIR / f"{stem}_report.md"
+            if path.parent.name == "transcripts":
+                reports_dir = path.parent.parent / "reports"
+                audio_dir = path.parent.parent / "audio"
+            else:
+                reports_dir = REPORTS_DIR
+                audio_dir = AUDIO_DIR
+            reports_dir.mkdir(parents=True, exist_ok=True)
+
+            report_json = reports_dir / f"{stem}_analysis.json"
+            report_md = reports_dir / f"{stem}_report.md"
 
             if not force and report_json.exists() and report_md.exists():
                 print(f"[{i}/{len(targets)}] Report existiert bereits: {report_md.name}")
@@ -158,7 +174,6 @@ class PodcastPipeline:
                 with open(path, "r", encoding="utf-8") as f:
                     transcript_data = json.load(f)
             else:
-                # Falls tatsächlich nur eine reine .txt Datei vorliegt:
                 with open(path, "r", encoding="utf-8") as f:
                     raw_text = f.read()
                 transcript_data = {
@@ -167,8 +182,8 @@ class PodcastPipeline:
                     "segments": [],
                 }
 
-            # Metadaten aus data/audio/<stem>.meta.json laden (falls vorhanden)
-            meta_file = AUDIO_DIR / f"{stem}.meta.json"
+            # Metadaten aus audio/<stem>.meta.json laden (falls vorhanden)
+            meta_file = audio_dir / f"{stem}.meta.json"
             meta: dict[str, Any] = {}
             if meta_file.exists():
                 try:
@@ -192,18 +207,18 @@ class PodcastPipeline:
                     episode_title=ep_title,
                     episode_description=ep_desc,
                 )
-            self.analyzer.analyze_transcript(transcript_data, title=ep_title)
+            self.analyzer.analyze_transcript(transcript_data, title=ep_title, output_dir=reports_dir)
 
-            # Aktualisiertes Transkript (.json und .txt) mit Kapiteln & Refinement speichern
+            # Aktualisiertes Transkript (.json und .txt) mit Kapiteln speichern
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(transcript_data, f, ensure_ascii=False, indent=2)
-            txt_path = TRANSCRIPTS_DIR / f"{stem}.txt"
+            txt_path = path.parent / f"{stem}.txt"
             with open(txt_path, "w", encoding="utf-8") as f:
                 f.write(transcript_data.get("full_text", ""))
 
             produced.append(report_json)
 
-        print(f"\n✅ Analyse abgeschlossen: {len(produced)} Report(s) in {REPORTS_DIR}")
+        print(f"\n✅ Analyse abgeschlossen: {len(produced)} Report(s)")
         return produced
 
     def analyze_speakers(
@@ -219,18 +234,26 @@ class PodcastPipeline:
                 transcript_file = transcript_file.with_suffix(".json")
             targets = [transcript_file]
         else:
-            if not TRANSCRIPTS_DIR.exists():
-                print(f"[Pipeline] Transkript-Verzeichnis {TRANSCRIPTS_DIR} existiert noch nicht.")
-                return []
-            targets = sorted(TRANSCRIPTS_DIR.glob("*.json"))
+            targets = sorted([
+                f for f in DATA_DIR.rglob("*.json")
+                if f.parent.name == "transcripts" and not f.name.endswith(".meta.json")
+            ])
             if not targets:
-                print(f"[Pipeline] Keine Transkripte in {TRANSCRIPTS_DIR} gefunden.")
+                print(f"[Pipeline] Keine Transkripte in {DATA_DIR} gefunden.")
                 return []
 
         produced = []
         for i, path in enumerate(targets, 1):
             stem = path.stem
-            report_md = REPORTS_DIR / f"{stem}_speakers.md"
+            if path.parent.name == "transcripts":
+                reports_dir = path.parent.parent / "reports"
+                audio_dir = path.parent.parent / "audio"
+            else:
+                reports_dir = REPORTS_DIR
+                audio_dir = AUDIO_DIR
+            reports_dir.mkdir(parents=True, exist_ok=True)
+
+            report_md = reports_dir / f"{stem}_speakers.md"
 
             if not force and report_md.exists():
                 print(f"[{i}/{len(targets)}] Sprecher-Analyse existiert bereits: {report_md.name}")
@@ -241,7 +264,7 @@ class PodcastPipeline:
             with open(path, "r", encoding="utf-8") as f:
                 transcript_data = json.load(f)
 
-            meta_file = AUDIO_DIR / f"{stem}.meta.json"
+            meta_file = audio_dir / f"{stem}.meta.json"
             meta: dict[str, Any] = {}
             if meta_file.exists():
                 try:
@@ -251,8 +274,11 @@ class PodcastPipeline:
                     pass
 
             ep_title = meta.get("title") or transcript_data.get("audio_file") or stem
-            self.speaker_analyzer.run_analysis(transcript_data, title=ep_title)
+            self.speaker_analyzer.run_analysis(transcript_data, title=ep_title, output_dir=reports_dir)
             produced.append(report_md)
+
+        print(f"\n✅ Sprecher-Analyse abgeschlossen: {len(produced)} Report(s)")
+        return produced
 
         return produced
 
@@ -352,7 +378,14 @@ class PodcastPipeline:
 
             # Stufe 3: NLP Analyse
             print("\n🧠 3. NLP-Analyse mit lokalem LLM...")
-            analysis_data = self.analyzer.analyze_transcript(transcript_data, title=ep.title)
+            podcast_dir = audio_path.parent.parent if audio_path.parent.name == "audio" else None
+            reports_dir = (podcast_dir / "reports") if podcast_dir else REPORTS_DIR
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            analysis_data = self.analyzer.analyze_transcript(
+                transcript_data,
+                title=ep.title,
+                output_dir=reports_dir,
+            )
 
             results.append({
                 "episode": ep.title,
@@ -386,7 +419,14 @@ class PodcastPipeline:
             )
 
         print("\n🧠 3. NLP-Analyse mit lokalem LLM...")
-        analysis_data = self.analyzer.analyze_transcript(transcript_data, title=title or audio_path.stem)
+        podcast_dir = audio_path.parent.parent if audio_path.parent.name == "audio" else None
+        reports_dir = (podcast_dir / "reports") if podcast_dir else REPORTS_DIR
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        analysis_data = self.analyzer.analyze_transcript(
+            transcript_data,
+            title=title or audio_path.stem,
+            output_dir=reports_dir,
+        )
 
         return {
             "audio_path": str(audio_path),

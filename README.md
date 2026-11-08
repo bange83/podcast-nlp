@@ -22,9 +22,10 @@ Eine rein lokale Python-Pipeline zum Herunterladen von Podcasts, Transkribieren 
 ```text
 podcast-nlp/
 ├── data/
-│   ├── audio/          # Heruntergeladene Episoden (.mp3 / .m4a)
-│   ├── transcripts/    # Transkripte (.json mit Timestamps & .txt)
-│   └── reports/        # Analyse-Reports (.json & .md)
+│   └── <podcast-name>/     # z. B. fest-flauschig/ (sauber getrennt pro Podcast)
+│       ├── audio/          # Audio-Dateien (z. B. 0718_titel.mp3) & .meta.json
+│       ├── transcripts/    # Transkripte (.json mit Timestamps, .txt & .rttm Diarization)
+│       └── reports/        # Analyse- & Sprecher-Reports (.json & .md)
 ├── podcast_pipeline/
 │   ├── __init__.py
 │   ├── config.py          # Modell- & Pfadkonfiguration

@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import requests
 from slugify import slugify
 from tqdm import tqdm
 
-from .config import AUDIO_DIR
+from .config import AUDIO_DIR, get_podcast_audio_dir
 
 
 @dataclass
@@ -18,6 +19,7 @@ class PodcastEpisode:
     description: str
     podcast_title: str = ""
     podcast_author: str = ""
+    episode_number: int | None = None
     local_path: Path | None = None
 
 
@@ -69,7 +71,8 @@ class PodcastDownloader:
         podcast_author = feed.feed.get("author", "") or feed.feed.get("itunes_author", "")
 
         episodes: list[PodcastEpisode] = []
-        for entry in feed.entries[:limit]:
+        total_entries = len(feed.entries)
+        for idx, entry in enumerate(feed.entries[:limit]):
             audio_url = None
             # Enclosures durchsuchen (standardmäßiger Podcast-Audiolink)
             for enclosure in getattr(entry, "enclosures", []):
@@ -92,6 +95,31 @@ class PodcastDownloader:
                 title = getattr(entry, "title", "Unbekannte Episode")
                 published = getattr(entry, "published", "")
                 description = getattr(entry, "summary", "")
+
+                # Folgennummer ermitteln
+                ep_num: int | None = None
+                raw_ep = getattr(entry, "itunes_episode", None) or getattr(entry, "episode", None)
+                if raw_ep is not None:
+                    try:
+                        ep_num = int(raw_ep)
+                    except (ValueError, TypeError):
+                        pass
+
+                # Fallback: Aus Titel extrahieren (z.B. "#42", "Folge 42", "Ep. 42", "42 - ...")
+                if ep_num is None:
+                    match = re.search(r"(?:Folge|Episode|Ep\.?|#)\s*(\d+)", title, re.IGNORECASE)
+                    if not match:
+                        match = re.match(r"^(\d+)\b", title)
+                    if match:
+                        try:
+                            ep_num = int(match.group(1))
+                        except (ValueError, TypeError):
+                            pass
+
+                # Fallback: Chronologische Nummerierung aus RSS-Feed-Reihenfolge (neueste oben)
+                if ep_num is None and total_entries > 0:
+                    ep_num = total_entries - idx
+
                 episodes.append(
                     PodcastEpisode(
                         title=title,
@@ -100,24 +128,38 @@ class PodcastDownloader:
                         description=description,
                         podcast_title=podcast_title,
                         podcast_author=podcast_author,
+                        episode_number=ep_num,
                     )
                 )
 
         return episodes
 
     def download_episode(self, episode: PodcastEpisode) -> Path:
-        """Lädt eine einzelne Episode mit Fortschrittsbalken herunter."""
+        """Lädt eine einzelne Episode mit Fortschrittsbalken in data/<podcast>/audio/ herunter."""
         clean_title = slugify(episode.title, max_length=60) or "episode"
+        if episode.episode_number is not None:
+            filename = f"{episode.episode_number:04d}_{clean_title}"
+        else:
+            filename = clean_title
+
         ext = ".mp3"
         if ".m4a" in episode.audio_url:
             ext = ".m4a"
 
-        target_file = self.output_dir / f"{clean_title}{ext}"
+        # Zielordner: data/<podcast-slug>/audio/ (oder übergebener output_dir als Fallback)
+        if episode.podcast_title:
+            target_dir = get_podcast_audio_dir(episode.podcast_title)
+        else:
+            target_dir = self.output_dir
+            target_dir.mkdir(parents=True, exist_ok=True)
 
-        meta_file = self.output_dir / f"{clean_title}.meta.json"
+        target_file = target_dir / f"{filename}{ext}"
+        meta_file = target_dir / f"{filename}.meta.json"
+
         if not meta_file.exists():
             meta_data = {
                 "title": episode.title,
+                "episode_number": episode.episode_number,
                 "published": episode.published,
                 "audio_url": episode.audio_url,
                 "description": episode.description,
@@ -131,11 +173,11 @@ class PodcastDownloader:
                 pass
 
         if target_file.exists() and target_file.stat().st_size > 0:
-            print(f"[Downloader] Bereits vorhanden: {target_file.name}")
+            print(f"[Downloader] Bereits vorhanden: {target_file.relative_to(target_file.parent.parent.parent)}")
             episode.local_path = target_file
             return target_file
 
-        print(f"[Downloader] Starte Download: {episode.title}")
+        print(f"[Downloader] Starte Download: {episode.title} -> {target_file.name}")
         response = requests.get(episode.audio_url, stream=True, timeout=30)
         response.raise_for_status()
 
@@ -144,7 +186,7 @@ class PodcastDownloader:
         with (
             open(target_file, "wb") as f,
             tqdm(
-                desc=clean_title[:30],
+                desc=filename[:30],
                 total=total_size,
                 unit="B",
                 unit_scale=True,
