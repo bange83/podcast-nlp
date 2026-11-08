@@ -142,6 +142,17 @@ python3 main.py analyze --model llama3.2
 python3 main.py analyze --file data/transcripts/meine_episode.json
 ```
 
+### 4. Optional: Detaillierte Sprecher-Analyse (`speakers`)
+Erstellt für fertige Transkripte eine tiefgehende quantitative Statistik (Redeanteile, Wortzahlen, Sprechtempo in WPM, längste Monologe, Top-Füllwörter) sowie ein psychologisches Charakter-, Werte- und Beziehungs-Profiling via LLM:
+
+```bash
+# Alle vorhandenen Transkripte analysieren:
+python3 main.py speakers
+
+# Mit spezifischem Modell (z.B. Qwen 2.5 14B):
+python3 main.py speakers --model qwen2.5:14b
+```
+
 ---
 
 ### Alternative: Alles in einem Rutsch (`run`)

@@ -86,6 +86,14 @@ Beispiele:
     p_an.add_argument("--force", action="store_true", help="Bereits erstellte Reports neu generieren")
 
     # -------------------------------------------------------------------------
+    # Subcommand: speakers (Optional)
+    # -------------------------------------------------------------------------
+    p_spk = subparsers.add_parser("speakers", help="Optional: Detaillierte Sprecher-Statistik (Redezeit, WPM, Top-Wörter) & LLM-Charakterprofiling")
+    p_spk.add_argument("--file", "-i", type=str, default=None, help="Einzelnes Transkript (.json oder .txt, Standard: alle in data/transcripts/)")
+    p_spk.add_argument("--model", "-m", type=str, default=DEFAULT_OLLAMA_MODEL, help=f"Ollama Modellname (Standard: {DEFAULT_OLLAMA_MODEL})")
+    p_spk.add_argument("--force", action="store_true", help="Bereits erstellte Sprecher-Analysen neu generieren")
+
+    # -------------------------------------------------------------------------
     # Subcommand: run (End-to-End)
     # -------------------------------------------------------------------------
     p_run = subparsers.add_parser("run", help="Alle 3 Schritte (Download -> Transkription -> Analyse) in einem Rutsch")
@@ -154,7 +162,19 @@ def main():
         )
         return
 
-    # 4. Subcommand: run (oder direkte Top-Level Flags)
+    # 4. Subcommand: speakers (Optional)
+    if args.subcommand == "speakers":
+        pipeline = PodcastPipeline(
+            ollama_model=args.model,
+        )
+        transcript_path = Path(args.file).resolve() if args.file else None
+        pipeline.analyze_speakers(
+            transcript_file=transcript_path,
+            force=args.force,
+        )
+        return
+
+    # 5. Subcommand: run (oder direkte Top-Level Flags)
     is_run = args.subcommand == "run"
     has_legacy_flags = getattr(args, "search", None) or getattr(args, "feed", None) or getattr(args, "file", None)
 

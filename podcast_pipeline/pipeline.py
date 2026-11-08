@@ -12,6 +12,7 @@ from .config import (
 )
 from .downloader import PodcastDownloader
 from .nlp_analyzer import LocalNLPAnalyzer
+from .speaker_analyzer import SpeakerAnalyzer
 from .transcriber import AudioTranscriber
 
 
@@ -31,6 +32,7 @@ class PodcastPipeline:
             cpu_threads=cpu_threads,
         )
         self.analyzer = LocalNLPAnalyzer(model_name=ollama_model)
+        self.speaker_analyzer = SpeakerAnalyzer(model_name=ollama_model)
 
     # =========================================================================
     # Modulare Einzelschritte: Download -> Transkription -> NLP-Analyse
@@ -199,6 +201,56 @@ class PodcastPipeline:
             produced.append(report_json)
 
         print(f"\n✅ Analyse abgeschlossen: {len(produced)} Report(s) in {REPORTS_DIR}")
+        return produced
+
+    def analyze_speakers(
+        self,
+        transcript_file: Path | None = None,
+        force: bool = False,
+    ) -> list[Path]:
+        """Führt quantitative und qualitative Sprecheranalysen auf Transkripten durch."""
+        if transcript_file:
+            if not transcript_file.exists():
+                raise FileNotFoundError(f"Transkriptdatei nicht gefunden: {transcript_file}")
+            if transcript_file.suffix == ".txt" and transcript_file.with_suffix(".json").exists():
+                transcript_file = transcript_file.with_suffix(".json")
+            targets = [transcript_file]
+        else:
+            if not TRANSCRIPTS_DIR.exists():
+                print(f"[Pipeline] Transkript-Verzeichnis {TRANSCRIPTS_DIR} existiert noch nicht.")
+                return []
+            targets = sorted(TRANSCRIPTS_DIR.glob("*.json"))
+            if not targets:
+                print(f"[Pipeline] Keine Transkripte in {TRANSCRIPTS_DIR} gefunden.")
+                return []
+
+        produced = []
+        for i, path in enumerate(targets, 1):
+            stem = path.stem
+            report_md = REPORTS_DIR / f"{stem}_speakers.md"
+
+            if not force and report_md.exists():
+                print(f"[{i}/{len(targets)}] Sprecher-Analyse existiert bereits: {report_md.name}")
+                produced.append(report_md)
+                continue
+
+            print(f"\n[{i}/{len(targets)}] 🎙️ Führe Sprecher-Analyse durch für: {path.name}...")
+            with open(path, "r", encoding="utf-8") as f:
+                transcript_data = json.load(f)
+
+            meta_file = AUDIO_DIR / f"{stem}.meta.json"
+            meta: dict[str, Any] = {}
+            if meta_file.exists():
+                try:
+                    with open(meta_file, "r", encoding="utf-8") as mf:
+                        meta = json.load(mf)
+                except Exception:
+                    pass
+
+            ep_title = meta.get("title") or transcript_data.get("audio_file") or stem
+            self.speaker_analyzer.run_analysis(transcript_data, title=ep_title)
+            produced.append(report_md)
+
         return produced
 
     # =========================================================================
