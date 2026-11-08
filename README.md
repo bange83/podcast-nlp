@@ -97,7 +97,8 @@ Für die Sprechertrennung (`pyannote.audio`) wird ein kostenloser Hugging Face A
 Mit [`uv`](https://docs.astral.sh/uv/) (empfohlen für maximale Geschwindigkeit):
 
 ```bash
-cd /Volumes/Samsung990/git/podcast-nlp
+git clone https://github.com/bange83/podcast-nlp.git
+cd podcast-nlp
 
 # 1. Virtuelle Umgebung anlegen & Abhängigkeiten synchronisieren
 uv sync

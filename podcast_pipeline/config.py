@@ -71,8 +71,8 @@ DEFAULT_COMPUTE_TYPE = "int8"
 # Anzahl CPU-Threads für CTranslate2 (optimal für M-Serie Macs)
 DEFAULT_CPU_THREADS = 8
 
-# Standard Ollama Modell (passend zu Ihren installierten Modellen)
-DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "dolphin-llama3:8b")
+# Standard Ollama Modell (optimal für deutsche Texte und strukturierte JSON-Ausgabe)
+DEFAULT_OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
 
 # Hugging Face Token für PyAnnote Speaker Diarization (optional)
 HF_TOKEN = os.getenv("HF_TOKEN")
