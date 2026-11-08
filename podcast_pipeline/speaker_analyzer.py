@@ -50,17 +50,6 @@ SPOKEN_CONVERSATIONAL_WORDS = frozenset({
     "guckt", "guck", "schauen", "steht", "stehen", "nehmen", "nimmt", "wollten",
 })
 
-# Weichmacher (Hedging) vs. Absolutheit (Assertion)
-HEDGING_WORDS = frozenset({
-    "vielleicht", "sozusagen", "gewissermaßen", "vermutlich", "möglicherweise",
-    "wahrscheinlich", "scheinbar", "anscheinend", "irgendwie", "quasi", "eigentlich", "etwa"
-})
-
-ASSERTION_WORDS = frozenset({
-    "definitiv", "absolut", "zweifellos", "niemals", "immer", "völlig", "garantiert",
-    "faktisch", "tatsächlich", "eindeutig", "sicher", "hundertprozentig", "zweifelsohne"
-})
-
 QUESTION_REGEX = re.compile(
     r'(\?|\b(warum|wieso|weshalb|inwiefern|woher|wohin)\b|\b(glaubst du|denkst du|hast du|meinst du|ist das nicht|kann man|findest du|weißt du)\b)',
     re.I
@@ -272,13 +261,6 @@ class SpeakerAnalyzer:
             question_count = sum(1 for t in spk_texts if QUESTION_REGEX.search(t))
             question_pct = round((question_count / len(spk_texts) * 100), 1) if spk_texts else 0.0
 
-            # Argumentationsstil: Weichmacher (Hedging) vs. Absolutheit (Assertion)
-            hedging_count = sum(1 for w in words_lower if w in HEDGING_WORDS)
-            hedging_pct = round((hedging_count / total_words * 100), 1) if total_words > 0 else 0.0
-
-            assertion_count = sum(1 for w in words_lower if w in ASSERTION_WORDS)
-            assertion_pct = round((assertion_count / total_words * 100), 1) if total_words > 0 else 0.0
-
             # Füllwörter zählen
             filler_counts = Counter(w for w in words_lower if w in COMMON_FILLER_WORDS)
             top_fillers = [{"word": w, "count": c} for w, c in filler_counts.most_common(6)]
@@ -316,10 +298,6 @@ class SpeakerAnalyzer:
                 "mtld_score": mtld_total,
                 "mtld_content_score": mtld_content,
                 "lexical_diversity_percent": ttr,
-                "hedging_count": hedging_count,
-                "hedging_percentage": hedging_pct,
-                "assertion_count": assertion_count,
-                "assertion_percentage": assertion_pct,
                 "top_fillers": top_fillers,
                 "top_content_words": top_content_words,
             }
@@ -698,7 +676,6 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         md.append("| **Zuhör- & Resonanz-Score** | " + " | ".join(fmt_listen(s) for s in speakers) + " |")
 
         md.append("| **Wortschatz-Vielfalt (MTLD Inhalt / Gesamt)** | " + " | ".join(f"**{stats['speakers'][s].get('mtld_content_score', 0)}** ({stats['speakers'][s].get('mtld_score', 0)} gesamt)" for s in speakers) + " |")
-        md.append("| **Argumentationsstil (Hedging / Absolutheit)** | " + " | ".join(f"{stats['speakers'][s].get('hedging_percentage', 0.0)}% / {stats['speakers'][s].get('assertion_percentage', 0.0)}%" for s in speakers) + " |")
 
         # Top Füllwörter
         def fmt_fillers(s):

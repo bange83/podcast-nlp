@@ -14,7 +14,6 @@
 | **Unterbrechungs-Stil (Steer/Supp/Disr)** | 37.5% *Steer* / 25.0% *Supp* / 37.5% *Disr* | 7.1% *Steer* / 14.3% *Supp* / 78.6% *Disr* |
 | **Zuhör- & Resonanz-Score** | **2.7** / 5.0 | **1.9** / 5.0 |
 | **Wortschatz-Vielfalt (MTLD Inhalt / Gesamt)** | **237.1** (66.8 gesamt) | **151.8** (80.4 gesamt) |
-| **Argumentationsstil (Hedging / Absolutheit)** | 0.7% / 0.2% | 0.8% / 0.5% |
 | **Typische Füllwörter** | *irgendwie* (24x), *eigentlich* (21x), *genau* (19x), *weißt* (11x) | *irgendwie* (16x), *genau* (8x), *eigentlich* (7x), *weißt* (6x) |
 | **Top-Themenbegriffe (Nicht-Füllwörter)** | `Bisschen` (25x), `Alle` (22x), `Interview` (22x), `Abend` (18x), `Blunt` (18x) | `Gerade` (15x), `Untertitelung` (14x), `Bisschen` (14x), `Kurz` (12x), `Bühne` (10x) |
 

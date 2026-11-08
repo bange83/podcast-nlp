@@ -14,7 +14,6 @@
 | **Unterbrechungs-Stil (Steer/Supp/Disr)** | 33.3% *Steer* / 66.7% *Supp* / 0.0% *Disr* | 60.0% *Steer* / 26.7% *Supp* / 13.3% *Disr* |
 | **Zuhör- & Resonanz-Score** | **4.1** / 5.0 | **3.0** / 5.0 |
 | **Wortschatz-Vielfalt (MTLD Inhalt / Gesamt)** | **418.3** (118.6 gesamt) | **456.9** (88.7 gesamt) |
-| **Argumentationsstil (Hedging / Absolutheit)** | 0.5% / 0.3% | 0.6% / 0.7% |
 | **Typische Füllwörter** | *genau* (28x), *richtig* (13x), *sozusagen* (9x), *eigentlich* (9x) | *richtig* (16x), *genau* (14x), *eigentlich* (11x), *sozusagen* (8x) |
 | **Top-Themenbegriffe (Nicht-Füllwörter)** | `Dollar` (21x), `Trump` (18x), `Richard` (17x), `Milliarden` (14x), `Millionen` (12x) | `Trump` (17x), `Kapitalismus` (14x), `Land` (10x), `Bevölkerung` (10x), `Staat` (9x) |
 

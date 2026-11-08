@@ -14,7 +14,6 @@
 | **Unterbrechungs-Stil (Steer/Supp/Disr)** | 61.5% *Steer* / 15.4% *Supp* / 23.1% *Disr* | 23.5% *Steer* / 58.8% *Supp* / 17.6% *Disr* |
 | **Zuhör- & Resonanz-Score** | **2.8** / 5.0 | **3.8** / 5.0 |
 | **Wortschatz-Vielfalt (MTLD Inhalt / Gesamt)** | **305.3** (94.7 gesamt) | **186.6** (81.4 gesamt) |
-| **Argumentationsstil (Hedging / Absolutheit)** | 0.5% / 0.3% | 0.4% / 0.4% |
 | **Typische Füllwörter** | *richtig* (21x), *halt* (18x), *eigentlich* (14x), *irgendwie* (14x) | *halt* (59x), *genau* (19x), *eigentlich* (18x), *richtig* (16x) |
 | **Top-Themenbegriffe (Nicht-Füllwörter)** | `Film` (61x), `Sense` (26x), `Sixth` (25x), `Dich` (21x), `Folge` (20x) | `Film` (50x), `Cole` (30x), `Bruce` (30x), `Willis` (30x), `Szene` (28x) |
 
