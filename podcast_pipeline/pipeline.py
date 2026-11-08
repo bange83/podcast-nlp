@@ -291,7 +291,13 @@ class PodcastPipeline:
                     pass
 
             ep_title = meta.get("title") or transcript_data.get("audio_file") or stem
-            self.speaker_analyzer.run_analysis(transcript_data, title=ep_title, output_dir=reports_dir)
+            rttm_file = path.with_suffix(".rttm")
+            self.speaker_analyzer.run_analysis(
+                transcript_data,
+                title=ep_title,
+                output_dir=reports_dir,
+                rttm_path=rttm_file if rttm_file.exists() else None,
+            )
             produced.append(report_md)
 
         print(f"\n✅ Sprecher-Analyse abgeschlossen: {len(produced)} Report(s)")

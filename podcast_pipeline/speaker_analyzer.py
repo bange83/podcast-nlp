@@ -32,6 +32,40 @@ COMMON_FILLER_WORDS = frozenset({
     "praktisch", "ungelogen", "safe", "brudi", "digga", "nah", "hä",
 })
 
+# Alltägliche Konversationsverben und -partikel für gesprochenes Deutsch
+SPOKEN_CONVERSATIONAL_WORDS = frozenset({
+    "also", "sagen", "gesagt", "sagte", "sagst", "glaube", "glauben", "glaubst",
+    "weiß", "wissen", "weißt", "schon", "mal", "eben", "einfach", "wirklich",
+    "immer", "sehen", "gesehen", "siehst", "geht", "ging", "gegangen", "denken",
+    "gedacht", "denkst", "meinen", "gemeint", "meinst", "irgendwann", "überhaupt",
+    "ganze", "ganzen", "ganzer", "ganzes", "natürlich", "dinge", "ding", "finden",
+    "gefunden", "findest", "kommen", "kommt", "kam", "gekommen", "menschen", "leute",
+    "wäre", "geben", "gibt", "gab", "gegeben", "lassen", "lässt", "machen", "macht",
+    "gemacht", "erst", "wieder", "sondern", "kein", "keine", "keinen", "keinem",
+    "keiner", "hast", "hatte", "hatten", "heißt", "über", "alles", "neue", "neuen",
+    "neuer", "neues", "viele", "vielen", "vieles", "große", "großen", "großer",
+    "großes", "zwei", "drei", "vier", "fünf", "zehn", "hundert", "tausend", "paar",
+    "gibt's", "gabs", "fragen", "gefragt", "jahr", "jahre", "jahren", "tag", "tage",
+    "tagen", "zeit", "fall", "stelle", "grund", "beispiel", "prozent", "gucken",
+    "guckt", "guck", "schauen", "steht", "stehen", "nehmen", "nimmt", "wollten",
+})
+
+# Weichmacher (Hedging) vs. Absolutheit (Assertion)
+HEDGING_WORDS = frozenset({
+    "vielleicht", "sozusagen", "gewissermaßen", "vermutlich", "möglicherweise",
+    "wahrscheinlich", "scheinbar", "anscheinend", "irgendwie", "quasi", "eigentlich", "etwa"
+})
+
+ASSERTION_WORDS = frozenset({
+    "definitiv", "absolut", "zweifellos", "niemals", "immer", "völlig", "garantiert",
+    "faktisch", "tatsächlich", "eindeutig", "sicher", "hundertprozentig", "zweifelsohne"
+})
+
+QUESTION_REGEX = re.compile(
+    r'(\?|\b(warum|wieso|weshalb|inwiefern|woher|wohin)\b|\b(glaubst du|denkst du|hast du|meinst du|ist das nicht|kann man|findest du|weißt du)\b)',
+    re.I
+)
+
 
 class SpeakerAnalyzer:
     def __init__(
@@ -50,6 +84,87 @@ class SpeakerAnalyzer:
         rem_secs = secs % 60
         return f"{mins}:{rem_secs:02d} min"
 
+    @staticmethod
+    def _compute_mtld(words: list[str], threshold: float = 0.72) -> float:
+        """Berechnet das längeninvariante Measure of Textual Lexical Diversity (MTLD)."""
+        if len(words) < 10:
+            return 0.0
+
+        def _calc_factors(word_list: list[str]) -> float:
+            factors = 0.0
+            types = set()
+            token_count = 0
+            for w in word_list:
+                types.add(w)
+                token_count += 1
+                ttr = len(types) / token_count
+                if ttr <= threshold:
+                    factors += 1.0
+                    types = set()
+                    token_count = 0
+            if token_count > 0:
+                excess_ttr = (1.0 - (len(types) / token_count)) / (1.0 - threshold)
+                factors += excess_ttr
+            return len(word_list) / factors if factors > 0 else float(len(word_list))
+
+        fwd = _calc_factors(words)
+        bwd = _calc_factors(words[::-1])
+        return round((fwd + bwd) / 2.0, 1)
+
+    @staticmethod
+    def _compute_interruptions(
+        segments: list[dict[str, Any]],
+        rttm_path: Path | None,
+        main_speakers: list[str],
+        speaker_mapping: dict[str, str],
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        """Ermittelt echte Unterbrechungen (Overlaps) aus RTTM-Audiodaten oder Segmenten."""
+        made: dict[str, int] = {spk: 0 for spk in main_speakers}
+        suffered: dict[str, int] = {spk: 0 for spk in main_speakers}
+
+        if rttm_path and rttm_path.exists():
+            tracks: list[tuple[float, float, str]] = []
+            try:
+                with open(rttm_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        parts = line.strip().split()
+                        if len(parts) >= 8 and parts[0] == "SPEAKER":
+                            s = float(parts[3])
+                            dur = float(parts[4])
+                            raw_spk = parts[7]
+                            resolved = speaker_mapping.get(raw_spk, raw_spk)
+                            if resolved in main_speakers:
+                                tracks.append((s, s + dur, resolved))
+
+                for i in range(len(tracks)):
+                    s1, e1, spk1 = tracks[i]
+                    for j in range(i + 1, min(i + 8, len(tracks))):
+                        s2, e2, spk2 = tracks[j]
+                        if spk1 != spk2 and s2 < (e1 - 0.25) and s2 > (s1 + 0.3):
+                            made[spk2] = made.get(spk2, 0) + 1
+                            suffered[spk1] = suffered.get(spk1, 0) + 1
+                return made, suffered
+            except Exception:
+                pass
+
+        # Fallback über Transkriptsegmente
+        for i in range(1, len(segments)):
+            prev_s = segments[i - 1]
+            curr_s = segments[i]
+            spk_prev = prev_s.get("speaker")
+            spk_curr = curr_s.get("speaker")
+            if (
+                spk_prev in main_speakers
+                and spk_curr in main_speakers
+                and spk_prev != spk_curr
+            ):
+                dt = float(curr_s.get("start", 0)) - float(prev_s.get("end", 0))
+                if dt < -0.2:
+                    made[spk_curr] = made.get(spk_curr, 0) + 1
+                    suffered[spk_prev] = suffered.get(spk_prev, 0) + 1
+
+        return made, suffered
+
     # =========================================================================
     # 1. Mathematische & Linguistische Statistiken (Deterministisch)
     # =========================================================================
@@ -58,6 +173,7 @@ class SpeakerAnalyzer:
         self,
         transcript_data: dict[str, Any],
         min_share_percent: float = 5.0,
+        rttm_path: Path | None = None,
     ) -> dict[str, Any]:
         """Berechnet Redeanteile, Wortzahlen, Sprechtempo, Monologe und Top-Wörter pro Hauptsprecher."""
         segments = transcript_data.get("segments", [])
@@ -81,16 +197,21 @@ class SpeakerAnalyzer:
             for spk, segs in speaker_segments.items()
         }
 
-        # Filter: Nur Hauptsprecher mit mindestens 5% Redeanteil (filtert Werbung, Jingles und Einspieler heraus)
+        # Filter: Nur Hauptsprecher mit mindestens 5% Redeanteil
         main_speakers = [
             spk for spk, dur in sorted(speaker_durations.items(), key=lambda x: x[1], reverse=True)
             if (dur / total_audio_speech_time * 100 >= min_share_percent)
         ]
-        # Falls kein Sprecher 5% erreicht (z.B. bei sehr vielen Gästen), nimm die Top 2
         if len(main_speakers) < 2:
             main_speakers = [
                 spk for spk, _ in sorted(speaker_durations.items(), key=lambda x: x[1], reverse=True)[:2]
             ]
+
+        # Unterbrechungen ermitteln
+        spk_mapping = transcript_data.get("speaker_mapping", {})
+        interruptions_made, interruptions_suffered = self._compute_interruptions(
+            segments, rttm_path, main_speakers, spk_mapping
+        )
 
         stats: dict[str, Any] = {
             "total_speech_time_seconds": total_audio_speech_time,
@@ -146,19 +267,33 @@ class SpeakerAnalyzer:
             longest_monologue_sec = max([t["end"] - t["start"] for t in spk_turns], default=0.0)
             avg_turn_sec = (sum(t["end"] - t["start"] for t in spk_turns) / len(spk_turns)) if spk_turns else 0.0
 
+            # Fragen erkennen
+            spk_texts = [s.get("text", "") for s in segs]
+            question_count = sum(1 for t in spk_texts if QUESTION_REGEX.search(t))
+            question_pct = round((question_count / len(spk_texts) * 100), 1) if spk_texts else 0.0
+
+            # Argumentationsstil: Weichmacher (Hedging) vs. Absolutheit (Assertion)
+            hedging_count = sum(1 for w in words_lower if w in HEDGING_WORDS)
+            hedging_pct = round((hedging_count / total_words * 100), 1) if total_words > 0 else 0.0
+
+            assertion_count = sum(1 for w in words_lower if w in ASSERTION_WORDS)
+            assertion_pct = round((assertion_count / total_words * 100), 1) if total_words > 0 else 0.0
+
             # Füllwörter zählen
             filler_counts = Counter(w for w in words_lower if w in COMMON_FILLER_WORDS)
             top_fillers = [{"word": w, "count": c} for w, c in filler_counts.most_common(6)]
 
-            # Top Inhaltswörter (ohne Stopwörter und ohne Füllwörter)
+            # Top Inhaltswörter / Substantive (ohne Stopwörter, ohne Füllwörter und ohne Alltagsverben)
+            filter_set = GERMAN_STOPWORDS | COMMON_FILLER_WORDS | SPOKEN_CONVERSATIONAL_WORDS
             content_words = [
-                w.title() for w in words_lower
-                if w not in GERMAN_STOPWORDS and w not in COMMON_FILLER_WORDS and len(w) > 3
+                w.capitalize() for w in words
+                if w.lower() not in filter_set and len(w) > 3
             ]
             content_counts = Counter(content_words)
-            top_content_words = [{"word": w, "count": c} for w, c in content_counts.most_common(10)]
+            top_content_words = [{"word": w, "count": c} for w, c in content_counts.most_common(8)]
 
-            # Lexikalische Vielfalt (Type-Token-Ratio)
+            # Lexikalische Vielfalt: Längenunabhängiges MTLD & klassische TTR
+            mtld_score = self._compute_mtld(words_lower)
             unique_words = len(set(words_lower))
             ttr = round((unique_words / total_words) * 100, 1) if total_words > 0 else 0.0
 
@@ -172,7 +307,16 @@ class SpeakerAnalyzer:
                 "longest_monologue_seconds": round(longest_monologue_sec, 1),
                 "longest_monologue_formatted": self._format_time(longest_monologue_sec),
                 "avg_turn_seconds": round(avg_turn_sec, 1),
+                "question_count": question_count,
+                "question_percentage": question_pct,
+                "interruptions_made": interruptions_made.get(spk, 0),
+                "interruptions_suffered": interruptions_suffered.get(spk, 0),
+                "mtld_score": mtld_score,
                 "lexical_diversity_percent": ttr,
+                "hedging_count": hedging_count,
+                "hedging_percentage": hedging_pct,
+                "assertion_count": assertion_count,
+                "assertion_percentage": assertion_pct,
                 "top_fillers": top_fillers,
                 "top_content_words": top_content_words,
             }
@@ -219,7 +363,11 @@ class SpeakerAnalyzer:
         prompt_samples = "\n\n".join(sample_sections)
 
         stats_summary = "\n".join(
-            f"- {spk}: {data['duration_formatted']} Redezeit ({data['share_percentage']}%), {data['words_per_minute']} WPM, längster Monolog: {data['longest_monologue_formatted']}"
+            f"- {spk}: {data['duration_formatted']} Redezeit ({data['share_percentage']}%), "
+            f"{data['words_per_minute']} WPM, {data.get('question_count', 0)} Fragen ({data.get('question_percentage', 0.0)}%), "
+            f"Unterbrechungen: {data.get('interruptions_made', 0)}x erteilt / {data.get('interruptions_suffered', 0)}x erlitten, "
+            f"Wortschatz-MTLD: {data.get('mtld_score', 0)}, "
+            f"Häufigste thematische Begriffe: {', '.join(w['word'] for w in data.get('top_content_words', [])[:6])}"
             for spk, data in stats.get("speakers", {}).items()
         )
 
@@ -294,13 +442,21 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         transcript_data: dict[str, Any],
         title: str | None = None,
         output_dir: Path | None = None,
+        rttm_path: Path | None = None,
     ) -> dict[str, Any]:
         """Führt quantitative Statistik und qualitative LLM-Charakteranalyse durch und speichert Reports."""
         file_stem = Path(transcript_data.get("audio_file", "podcast")).stem
         episode_title = title or file_stem
 
+        # Falls rttm_path nicht übergeben wurde, in transcripts-Verzeichnis nachsehen
+        resolved_rttm = rttm_path
+        if not resolved_rttm and output_dir:
+            candidate = output_dir.parent / "transcripts" / f"{file_stem}.rttm"
+            if candidate.exists():
+                resolved_rttm = candidate
+
         # 1. Zahlen & Fakten
-        stats = self.compute_statistics(transcript_data)
+        stats = self.compute_statistics(transcript_data, rttm_path=resolved_rttm)
         if not stats.get("speakers"):
             print("[SpeakerAnalyzer] Keine differenzierten Sprecher im Transkript gefunden.")
             return {}
@@ -358,7 +514,10 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         md.append("| **Sprechtempo** | " + " | ".join(f"**{stats['speakers'][s]['words_per_minute']}** WPM" for s in speakers) + " |")
         md.append("| **Längster Monolog** | " + " | ".join(f"{stats['speakers'][s]['longest_monologue_formatted']}" for s in speakers) + " |")
         md.append("| **Durchschn. Redezeit / Turn** | " + " | ".join(f"{stats['speakers'][s]['avg_turn_seconds']}s" for s in speakers) + " |")
-        md.append("| **Wortschatz-Vielfalt (TTR)** | " + " | ".join(f"{stats['speakers'][s]['lexical_diversity_percent']}%" for s in speakers) + " |")
+        md.append("| **Fragen gestellt** | " + " | ".join(f"{stats['speakers'][s].get('question_count', 0)} ({stats['speakers'][s].get('question_percentage', 0.0)}%)" for s in speakers) + " |")
+        md.append("| **Unterbrechungen (erteilt / erlitten)** | " + " | ".join(f"{stats['speakers'][s].get('interruptions_made', 0)}x / {stats['speakers'][s].get('interruptions_suffered', 0)}x" for s in speakers) + " |")
+        md.append("| **Wortschatz-Vielfalt (MTLD / TTR)** | " + " | ".join(f"**{stats['speakers'][s].get('mtld_score', 0)}** ({stats['speakers'][s]['lexical_diversity_percent']}% TTR)" for s in speakers) + " |")
+        md.append("| **Argumentationsstil (Hedging / Absolutheit)** | " + " | ".join(f"{stats['speakers'][s].get('hedging_percentage', 0.0)}% / {stats['speakers'][s].get('assertion_percentage', 0.0)}%" for s in speakers) + " |")
 
         # Top Füllwörter
         def fmt_fillers(s):
@@ -366,11 +525,11 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
             return ", ".join(f"*{f['word']}* ({f['count']}x)" for f in fls[:4]) if fls else "-"
         md.append("| **Typische Füllwörter** | " + " | ".join(fmt_fillers(s) for s in speakers) + " |")
 
-        # Top Inhaltswörter
+        # Top Inhaltswörter (Nicht-Füllwörter)
         def fmt_content(s):
             cnt = stats['speakers'][s].get('top_content_words', [])
-            return ", ".join(f"`{c['word']}`" for c in cnt[:5]) if cnt else "-"
-        md.append("| **Häufigste Begriffe** | " + " | ".join(fmt_content(s) for s in speakers) + " |")
+            return ", ".join(f"`{c['word']}` ({c['count']}x)" for c in cnt[:5]) if cnt else "-"
+        md.append("| **Top-Themenbegriffe (Nicht-Füllwörter)** | " + " | ".join(fmt_content(s) for s in speakers) + " |")
 
         md.append("")
 
