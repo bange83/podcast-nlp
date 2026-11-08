@@ -175,7 +175,12 @@ class AudioTranscriber:
             else:
                 diarize_input = str(audio_path)
 
-            res: Any = pipeline(diarize_input)
+            try:
+                from pyannote.audio.pipelines.utils.hook import ProgressHook
+                with ProgressHook() as hook:
+                    res: Any = pipeline(diarize_input, hook=hook)
+            except Exception:
+                res: Any = pipeline(diarize_input)
             # PyAnnote 3.1+ gibt DiarizeOutput zurück
             annotation: Any = getattr(res, "speaker_diarization", res)
 
@@ -259,9 +264,11 @@ class AudioTranscriber:
             decode_kwargs["language"] = language
 
         t0 = time.time()
+        # verbose=False schaltet in mlx-whisper den internen tqdm-Fortschrittsbalken aktiv
         res = mlx_whisper.transcribe(
             str(audio_path),
             path_or_hf_repo=repo_or_path,
+            verbose=False,
             **decode_kwargs,
         )
         elapsed = time.time() - t0

@@ -164,7 +164,26 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
         if not segments:
             return []
 
-        # Dichte Zeitleiste erzeugen: Blöcke alle ~45-50 Sekunden mit realem Text
+        # Gesamtdauer ermitteln
+        total_duration = float(transcript_data.get("duration_seconds", 0.0))
+        if not total_duration and segments:
+            total_duration = float(segments[-1].get("end", 0.0))
+
+        end_timestamp_str = self._format_timestamp(total_duration)
+        total_minutes = max(1, int(total_duration // 60))
+
+        # Adaptives Intervall für Zeitleiste: Bleibt auch bei 2-3h Podcasts kompakt im 16k Kontext
+        if total_duration <= 3600:
+            step_interval = 45.0
+            max_chunk_chars = 300
+        elif total_duration <= 7200:
+            step_interval = 65.0
+            max_chunk_chars = 260
+        else:
+            step_interval = 90.0
+            max_chunk_chars = 240
+
+        # Dichte Zeitleiste erzeugen mit realem Text
         timeline_entries: list[str] = []
         current_chunk: list[str] = []
         chunk_start_t = 0.0
@@ -185,40 +204,51 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
             line = f"{spk}: {text}" if spk and spk != "UNKNOWN" else text
             current_chunk.append(line)
 
-            if t - chunk_start_t >= 50.0:
+            if t - chunk_start_t >= step_interval:
                 ts_str = self._format_timestamp(chunk_start_t)
                 combined = " ".join(current_chunk)
-                # Bis zu 300 Zeichen pro 50-Sekunden-Block für reichhaltigen Kontext
-                timeline_entries.append(f"[{ts_str}] {combined[:300]}...")
+                timeline_entries.append(f"[{ts_str}] {combined[:max_chunk_chars]}...")
                 current_chunk = []
 
         if current_chunk:
             ts_str = self._format_timestamp(chunk_start_t)
-            timeline_entries.append(f"[{ts_str}] {' '.join(current_chunk)[:300]}...")
+            timeline_entries.append(f"[{ts_str}] {' '.join(current_chunk)[:max_chunk_chars]}...")
 
         timeline_text = "\n".join(timeline_entries)
         episode_title = title or transcript_data.get("audio_file", "Podcast Episode")
 
-        prompt = f"""Du bist ein erfahrener Podcast-Redakteur und erstellst eine detaillierte, leserfreundliche Kapitelübersicht für die Episode '{episode_title}'.
+        prompt = f"""Du bist ein erfahrener Podcast-Redakteur und erstellst eine detaillierte, lückenlose Kapitelübersicht für die Episode '{episode_title}'.
 
-Hier ist die chronologische Zeitleiste des Podcasts mit Zeitstempeln (im Format MM:SS oder HH:MM:SS):
+GESAMTLAUFZEIT DER EPISODE: {end_timestamp_str} ({total_minutes} Minuten)
+
+Hier ist die chronologische Zeitleiste des gesamten Podcasts mit Zeitstempeln:
 {timeline_text}
 
-Aufgabe:
-Teile den Podcast in ca. 6-10 inhaltlich klar abgegrenzte Kapitel (Themenblöcke) ein.
-WICHTIG für jedes Kapitel:
-- "start" und "end" (Format MM:SS oder HH:MM:SS)
-- "title": Ein aussagekräftiger, unterhaltsamer Thementitel (KEINE generischen Titel wie 'Smalltalk', 'Medien' oder 'Politik')
-- "summary": 1-2 Sätze prägnante Kurzbeschreibung
-- "bullet_points": 3-5 KONKRETE Stichpunkte mit detaillierten Inhalten (Nenne konkrete Personen, Anekdoten, Pointen, Argumente und Meinungen. KEINE allgemeinen Floskeln wie 'Sie sprechen über Themen'!)
-- "keywords": 3-5 konkrete Schlagworte oder Entitäten
+AUFGABE & KRITISCHE REGELN:
+1. GESAMTE EPISODE LÜCKENLOS ABDECKEN:
+   - Die Kapitel MÜSSEN den gesamten Verlauf von 00:00 bis zum Schluss ({end_timestamp_str}) abdecken!
+   - Das erste Kapitel beginnt bei "00:00".
+   - Das letzte Kapitel MUSS bis zum Ende der Folge ("{end_timestamp_str}") gehen.
+   - Es darf keine zeitlichen Lücken zwischen Kapiteln geben (jedes Folgekapitel schließt direkt an das vorherige an).
+
+2. THEMENGETRIEBENE KAPITELBILDUNG (KEINE KÜNSTLICHE QUOTE):
+   - Erstelle ein neues Kapitel immer dann, wenn ein echter thematischer Übergang, ein neuer Diskussionsschwerpunkt, Filmabschnitt oder eine neue Rubrik beginnt (typische Kapitellänge: ca. 6 bis 18 Minuten).
+   - Verliere dich NICHT in 2-Minuten-Mikroschritten am Anfang. Fasse zusammengehörige Gespräche zu sinnvollen Themenblöcken zusammen.
+   - Die Gesamtzahl der Kapitel ergibt sich natürlich aus dem Inhalt der Episode.
+
+3. STRUKTUR PRO KAPITEL:
+   - "start" und "end" (Format MM:SS oder HH:MM:SS)
+   - "title": Ein prägnanter, treffender Thementitel
+   - "summary": 1-2 Sätze aussagekräftige Kurzbeschreibung
+   - "bullet_points": 3-5 KONKRETE Stichpunkte mit detaillierten Inhalten (Nenne konkrete Personen, Argumente, Pointen, Filmtheorien oder Meinungen. Keine leeren Floskeln!)
+   - "keywords": 3-5 konkrete Schlagworte
 
 Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
 {{
   "chapters": [
     {{
-      "start": "05:30",
-      "end": "14:15",
+      "start": "00:00",
+      "end": "12:30",
       "title": "Auf der Bühne mit Fran Lebowitz",
       "summary": "Jan erzählt von seinem Auftritt als Moderator mit der New Yorker Ikone im Hamburger Schauspielhaus.",
       "bullet_points": [
@@ -295,14 +325,36 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
             "Antworte immer auf Deutsch, es sei denn, das Transkript erfordert zwingend eine andere Sprache."
         )
 
-        user_prompt = f"""Hier ist das Transkript einer Podcast-Folge:
+        # Kontext für finale Synthese aufbereiten (Unterstützt auch mehrstündige Episoden)
+        if len(text) <= 45000:
+            content_block = f"--- TRANSKRIPT ANFANG ---\n{text}\n--- TRANSKRIPT ENDE ---"
+        else:
+            chapter_lines = []
+            if chapters:
+                for c in chapters:
+                    bp_str = "\n".join(f"  - {bp}" for bp in c.get("bullet_points", []))
+                    chapter_lines.append(
+                        f"Kapitel [{c.get('start')} - {c.get('end')}] {c.get('title')}:\n"
+                        f"Kurzbeschreibung: {c.get('summary')}\n"
+                        f"Wichtige Inhalte:\n{bp_str}"
+                    )
+            chapter_overview_str = "\n\n".join(chapter_lines)
+            end_ts = self._format_timestamp(transcript_data.get("duration_seconds", 0))
+            content_block = (
+                f"--- VOLLSTÄNDIGER INHALTSABLAUF ALLER THEMEN & KAPITEL (00:00 bis {end_ts}) ---\n"
+                f"{chapter_overview_str}\n\n"
+                f"--- O-TON AUSZUG EINFÜHRUNG (START) ---\n"
+                f"{text[:14000]}\n\n"
+                f"--- O-TON AUSZUG FINALE (ENDE) ---\n"
+                f"{text[-14000:]}"
+            )
+
+        user_prompt = f"""Hier sind die Inhalte und das Transkript einer Podcast-Folge:
 Titel: {episode_title}
 
---- TRANSKRIPT ANFANG ---
-{text[:48000]}
---- TRANSKRIPT ENDE ---
+{content_block}
 
-Erstelle eine fundierte Analyse und antworte im folgenden JSON-Format:
+Erstelle eine fundierte Gesamtanalyse der gesamten Folge und antworte im folgenden JSON-Format:
 {{
   "title": "{episode_title}",
   "one_sentence_summary": "Eine prägnante einzeilige Kernaussage der Folge",
