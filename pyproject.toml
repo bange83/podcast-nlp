@@ -1,6 +1,6 @@
 [project]
 name = "podcast-nlp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Podcast NLP Pipeline: Download, Transkription & lokale NLP-Analysen"
 readme = "README.md"
 requires-python = ">=3.11, <3.13"
@@ -11,6 +11,7 @@ dependencies = [
     "python-slugify>=8.0.4",
     "python-dotenv>=1.0.0",
     "faster-whisper>=1.0.0",
+    "mlx-whisper>=0.4.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "av<18.0.0",
     "torch>=2.2.0",
     "pyannote-audio>=3.1.1",

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from podcast_pipeline.config import (
     DEFAULT_OLLAMA_MODEL,
+    DEFAULT_TRANSCRIBER_BACKEND,
     DEFAULT_WHISPER_MODEL,
     HF_TOKEN,
 )
@@ -17,6 +18,13 @@ def add_common_transcribe_args(parser: argparse.ArgumentParser):
         type=str,
         default=DEFAULT_WHISPER_MODEL,
         help=f"Whisper-Modellgröße: tiny, base, small, medium, large-v3-turbo (Standard: {DEFAULT_WHISPER_MODEL})",
+    )
+    parser.add_argument(
+        "--backend", "-b",
+        type=str,
+        choices=["auto", "mlx", "faster-whisper"],
+        default=DEFAULT_TRANSCRIBER_BACKEND,
+        help=f"Whisper-Engine: 'auto' (empfohlen: nutzt Apple Silicon GPU Metal wenn verfügbar), 'mlx' oder 'faster-whisper' (Standard: {DEFAULT_TRANSCRIBER_BACKEND})",
     )
     parser.add_argument(
         "--language", "-l",
@@ -139,6 +147,7 @@ def main():
     if args.subcommand == "transcribe":
         pipeline = PodcastPipeline(
             whisper_model=args.whisper_model,
+            whisper_backend=args.backend,
             hf_token=args.hf_token,
             cpu_threads=args.threads,
         )
@@ -186,12 +195,14 @@ def main():
         force_arg = getattr(args, "force", False)
         lang_arg = getattr(args, "language", None)
         wmodel_arg = getattr(args, "whisper_model", DEFAULT_WHISPER_MODEL)
+        backend_arg = getattr(args, "backend", DEFAULT_TRANSCRIBER_BACKEND)
         omodel_arg = getattr(args, "llm_model", DEFAULT_OLLAMA_MODEL)
         token_arg = getattr(args, "hf_token", HF_TOKEN)
         threads_arg = getattr(args, "threads", 8)
 
         pipeline = PodcastPipeline(
             whisper_model=wmodel_arg,
+            whisper_backend=backend_arg,
             ollama_model=omodel_arg,
             hf_token=token_arg,
             cpu_threads=threads_arg,

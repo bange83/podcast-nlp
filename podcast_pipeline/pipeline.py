@@ -5,6 +5,7 @@ from typing import Any
 from .config import (
     AUDIO_DIR,
     DEFAULT_OLLAMA_MODEL,
+    DEFAULT_TRANSCRIBER_BACKEND,
     DEFAULT_WHISPER_MODEL,
     HF_TOKEN,
     REPORTS_DIR,
@@ -20,6 +21,7 @@ class PodcastPipeline:
     def __init__(
         self,
         whisper_model: str = DEFAULT_WHISPER_MODEL,
+        whisper_backend: str = DEFAULT_TRANSCRIBER_BACKEND,
         ollama_model: str = DEFAULT_OLLAMA_MODEL,
         hf_token: str | None = HF_TOKEN,
         cpu_threads: int = 8,
@@ -28,6 +30,7 @@ class PodcastPipeline:
         token = hf_token or HF_TOKEN
         self.transcriber = AudioTranscriber(
             model_size=whisper_model,
+            backend=whisper_backend,
             hf_token=token,
             cpu_threads=cpu_threads,
         )

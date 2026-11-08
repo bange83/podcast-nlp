@@ -1,4 +1,7 @@
 import json
+import platform
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -8,16 +11,30 @@ from tqdm import tqdm
 from .config import (
     DEFAULT_COMPUTE_TYPE,
     DEFAULT_CPU_THREADS,
+    DEFAULT_TRANSCRIBER_BACKEND,
     DEFAULT_WHISPER_MODEL,
     HF_TOKEN,
+    MLX_WHISPER_MODELS,
     TRANSCRIPTS_DIR,
 )
+
+
+def is_mlx_supported() -> bool:
+    """Prüft, ob Apple Silicon (macOS arm64) und mlx-whisper verfügbar sind."""
+    if sys.platform != "darwin" or platform.machine().lower() != "arm64":
+        return False
+    try:
+        import mlx_whisper  # noqa: F401
+        return True
+    except ImportError:
+        return False
 
 
 class AudioTranscriber:
     def __init__(
         self,
         model_size: str = DEFAULT_WHISPER_MODEL,
+        backend: str = DEFAULT_TRANSCRIBER_BACKEND,
         device: str = "cpu",
         compute_type: str = DEFAULT_COMPUTE_TYPE,
         cpu_threads: int = DEFAULT_CPU_THREADS,
@@ -25,6 +42,8 @@ class AudioTranscriber:
         hf_token: str | None = HF_TOKEN,
     ):
         self.model_size = model_size
+        self.requested_backend = backend.lower().strip()
+        self.backend = self._resolve_backend(self.requested_backend)
         self.device = device
         self.compute_type = compute_type
         self.cpu_threads = cpu_threads
@@ -33,6 +52,29 @@ class AudioTranscriber:
         self.hf_token = hf_token or HF_TOKEN
         self._model: WhisperModel | None = None
         self._diarization_pipeline: Any = None
+
+    def _resolve_backend(self, backend: str) -> str:
+        """Ermittelt das optimale Transkriptions-Backend basierend auf Hardware und Nutzeranforderung."""
+        if backend == "auto":
+            if is_mlx_supported():
+                print("[Transcriber] 🚀 Apple Silicon erkannt: Nutze hardwarebeschleunigtes 'mlx-whisper' (Metal GPU).")
+                return "mlx"
+            else:
+                print("[Transcriber] Standard-Backend 'faster-whisper' (CPU/CUDA) wird genutzt.")
+                return "faster-whisper"
+        elif backend == "mlx":
+            if not is_mlx_supported():
+                if sys.platform != "darwin" or platform.machine().lower() != "arm64":
+                    raise RuntimeError("Backend 'mlx' ist nur auf macOS mit Apple Silicon (arm64) verfügbar.")
+                raise RuntimeError("Backend 'mlx' ausgewählt, aber 'mlx-whisper' ist nicht installiert. Bitte mit 'uv sync' installieren.")
+            print("[Transcriber] 🚀 Explizites Backend 'mlx' aktiviert (Metal GPU).")
+            return "mlx"
+        elif backend in ("faster-whisper", "faster_whisper"):
+            print("[Transcriber] Explizites Backend 'faster-whisper' aktiviert.")
+            return "faster-whisper"
+        else:
+            print(f"[Transcriber] Unbekanntes Backend '{backend}', nutze Standard 'faster-whisper'.")
+            return "faster-whisper"
 
     @property
     def model(self) -> WhisperModel:
@@ -169,13 +211,157 @@ class AudioTranscriber:
 
         return "UNKNOWN"
 
+    def _transcribe_mlx(
+        self,
+        audio_path: Path,
+        language: str | None = None,
+        diarization: Any = None,
+    ) -> dict[str, Any]:
+        """Transkribiert mit Apple Silicon Metal GPU Beschleunigung via mlx-whisper."""
+        import mlx_whisper
+
+        repo_or_path = MLX_WHISPER_MODELS.get(self.model_size, self.model_size)
+        print(f"[Transcriber] ⚡ MLX Metal GPU Beschleunigung aktiv (Modell: '{repo_or_path}')...")
+
+        decode_kwargs: dict[str, Any] = {}
+        if language:
+            decode_kwargs["language"] = language
+
+        t0 = time.time()
+        res = mlx_whisper.transcribe(
+            str(audio_path),
+            path_or_hf_repo=repo_or_path,
+            **decode_kwargs,
+        )
+        elapsed = time.time() - t0
+
+        res_dict: dict[str, Any] = res if isinstance(res, dict) else {}
+        raw_segments_val = res_dict.get("segments", [])
+        raw_segments: list[Any] = raw_segments_val if isinstance(raw_segments_val, list) else []
+        detected_lang = res_dict.get("language", language or "unknown")
+
+        segments: list[dict[str, Any]] = []
+        dialogue_lines: list[str] = []
+
+        for idx, seg in enumerate(raw_segments):
+            seg_dict_raw: dict[str, Any] = seg if isinstance(seg, dict) else {}
+            start = round(float(seg_dict_raw.get("start", 0.0)), 2)
+            end = round(float(seg_dict_raw.get("end", 0.0)), 2)
+            text = str(seg_dict_raw.get("text", "")).strip()
+            speaker = self._assign_speaker_to_segment(start, end, diarization)
+
+            seg_dict = {
+                "id": seg_dict_raw.get("id", idx),
+                "start": start,
+                "end": end,
+                "speaker": speaker,
+                "text": text,
+            }
+            segments.append(seg_dict)
+
+            if speaker != "UNKNOWN":
+                dialogue_lines.append(f"[{start}s - {end}s] {speaker}: {text}")
+            else:
+                dialogue_lines.append(f"[{start}s - {end}s] {text}")
+
+        full_text = "\n".join(dialogue_lines)
+        duration = round(segments[-1]["end"], 2) if segments else 0.0
+        speedup = (duration / elapsed) if elapsed > 0 and duration > 0 else 0.0
+        mins = int(duration // 60)
+        secs = int(duration % 60)
+        print(f"[Transcriber] ⚡ MLX Metal Transkription abgeschlossen in {elapsed:.1f}s für {mins}m {secs}s Audio ({speedup:.1f}x Echtzeit)!")
+
+        return {
+            "audio_file": audio_path.name,
+            "language": detected_lang,
+            "language_probability": 1.0,
+            "duration_seconds": duration,
+            "has_diarization": diarization is not None,
+            "backend": "mlx",
+            "full_text": full_text,
+            "segments": segments,
+        }
+
+    def _transcribe_faster_whisper(
+        self,
+        audio_path: Path,
+        language: str | None = None,
+        diarization: Any = None,
+    ) -> dict[str, Any]:
+        """Transkribiert mit CTranslate2 (faster-whisper) auf CPU oder CUDA."""
+        print(f"[Transcriber] Starte faster-whisper Transkription von: {audio_path.name}")
+        segments_gen, info = self.model.transcribe(
+            str(audio_path),
+            language=language,
+            beam_size=5,
+            vad_filter=True,
+        )
+
+        detected_lang = info.language
+        lang_prob = round(info.language_probability, 3)
+        duration = round(info.duration, 2)
+        total_seconds = int(duration)
+        print(f"[Transcriber] Erkannte Sprache: '{detected_lang}' ({lang_prob*100:.1f}%), Gesamtdauer: {total_seconds // 60}m {total_seconds % 60}s")
+
+        segments = []
+        dialogue_lines = []
+        last_reported_end = 0.0
+
+        with tqdm(
+            total=total_seconds,
+            unit="s",
+            desc="[Transcriber] Fortschritt",
+            bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}s [{elapsed}<{remaining}]",
+        ) as pbar:
+            for segment in segments_gen:
+                start = round(segment.start, 2)
+                end = round(segment.end, 2)
+                text = segment.text.strip()
+
+                advance = int(end) - int(last_reported_end)
+                if advance > 0:
+                    pbar.update(advance)
+                    last_reported_end = end
+
+                speaker = self._assign_speaker_to_segment(start, end, diarization)
+
+                seg_dict = {
+                    "id": segment.id,
+                    "start": start,
+                    "end": end,
+                    "speaker": speaker,
+                    "text": text,
+                }
+                segments.append(seg_dict)
+
+                if speaker != "UNKNOWN":
+                    dialogue_lines.append(f"[{start}s - {end}s] {speaker}: {text}")
+                else:
+                    dialogue_lines.append(f"[{start}s - {end}s] {text}")
+
+            if pbar.n < total_seconds:
+                pbar.update(total_seconds - pbar.n)
+
+        full_text = "\n".join(dialogue_lines)
+
+        return {
+            "audio_file": audio_path.name,
+            "language": detected_lang,
+            "language_probability": lang_prob,
+            "duration_seconds": duration,
+            "has_diarization": diarization is not None,
+            "backend": "faster-whisper",
+            "full_text": full_text,
+            "segments": segments,
+        }
+
     def transcribe(
         self,
         audio_path: Path,
         language: str | None = None,
         force_recompute: bool = False,
     ) -> dict[str, Any]:
-        """Transkribiert eine Audiodatei und ordnet optional Sprecher (Jan vs Olli) zu."""
+        """Transkribiert eine Audiodatei und ordnet optional Sprecher (z.B. Jan vs Olli) zu."""
         stem = audio_path.stem
         json_path = self.output_dir / f"{stem}.json"
         txt_path = self.output_dir / f"{stem}.txt"
@@ -221,72 +407,17 @@ class AudioTranscriber:
         # 1. Optionale Diarization (Sprechererkennung)
         diarization = self._run_diarization(audio_path)
 
-        # 2. Whisper Transkription
-        print(f"[Transcriber] Starte Transkription von: {audio_path.name}")
-        segments_gen, info = self.model.transcribe(
-            str(audio_path),
-            language=language,
-            beam_size=5,
-            vad_filter=True
-        )
-
-        detected_lang = info.language
-        lang_prob = round(info.language_probability, 3)
-        duration = round(info.duration, 2)
-        total_seconds = int(duration)
-        print(f"[Transcriber] Erkannte Sprache: '{detected_lang}' ({lang_prob*100:.1f}%), Gesamtdauer: {total_seconds // 60}m {total_seconds % 60}s")
-
-        segments = []
-        dialogue_lines = []
-        last_reported_end = 0.0
-
-        with tqdm(
-            total=total_seconds,
-            unit="s",
-            desc="[Transcriber] Fortschritt",
-            bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}s [{elapsed}<{remaining}]"
-        ) as pbar:
-            for segment in segments_gen:
-                start = round(segment.start, 2)
-                end = round(segment.end, 2)
-                text = segment.text.strip()
-
-                advance = int(end) - int(last_reported_end)
-                if advance > 0:
-                    pbar.update(advance)
-                    last_reported_end = end
-
-                speaker = self._assign_speaker_to_segment(start, end, diarization)
-
-                seg_dict = {
-                    "id": segment.id,
-                    "start": start,
-                    "end": end,
-                    "speaker": speaker,
-                    "text": text
-                }
-                segments.append(seg_dict)
-
-                # Formatierte Dialogzeile
-                if speaker != "UNKNOWN":
-                    dialogue_lines.append(f"[{start}s - {end}s] {speaker}: {text}")
-                else:
-                    dialogue_lines.append(f"[{start}s - {end}s] {text}")
-
-            if pbar.n < total_seconds:
-                pbar.update(total_seconds - pbar.n)
-
-        full_text = "\n".join(dialogue_lines)
-
-        result_data = {
-            "audio_file": audio_path.name,
-            "language": detected_lang,
-            "language_probability": lang_prob,
-            "duration_seconds": duration,
-            "has_diarization": diarization is not None,
-            "full_text": full_text,
-            "segments": segments
-        }
+        # 2. Whisper Transkription via gewähltem Backend (mit automatischem Fallback)
+        print(f"[Transcriber] Starte Transkription von: {audio_path.name} (Backend: {self.backend})")
+        if self.backend == "mlx":
+            try:
+                result_data = self._transcribe_mlx(audio_path, language=language, diarization=diarization)
+            except Exception as e:
+                print(f"[Transcriber] ⚠️ Fehler bei MLX-Transkription: {e}")
+                print("[Transcriber] Wechsle automatisch auf Fallback 'faster-whisper'...")
+                result_data = self._transcribe_faster_whisper(audio_path, language=language, diarization=diarization)
+        else:
+            result_data = self._transcribe_faster_whisper(audio_path, language=language, diarization=diarization)
 
         # Speichern als JSON
         with open(json_path, "w", encoding="utf-8") as f:
@@ -294,7 +425,7 @@ class AudioTranscriber:
 
         # Speichern als Textdatei
         with open(txt_path, "w", encoding="utf-8") as f:
-            f.write(full_text)
+            f.write(result_data["full_text"])
 
         print(f"[Transcriber] Fertig! Gespeichert unter:\n  -> {json_path}\n  -> {txt_path}")
         return result_data

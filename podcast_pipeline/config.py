@@ -17,6 +17,20 @@ REPORTS_DIR = DATA_DIR / "reports"
 # Whisper: "tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"
 DEFAULT_WHISPER_MODEL = "large-v3-turbo"
 
+# Transcriber Backend: "auto", "mlx", "faster-whisper"
+# "auto": Erkennt automatisch Apple Silicon (Metal GPU) und nutzt mlx-whisper, sonst faster-whisper
+DEFAULT_TRANSCRIBER_BACKEND = os.getenv("WHISPER_BACKEND", "auto")
+
+# Hugging Face Repositories für mlx-whisper (MLX Community)
+MLX_WHISPER_MODELS = {
+    "tiny": "mlx-community/whisper-tiny",
+    "base": "mlx-community/whisper-base",
+    "small": "mlx-community/whisper-small",
+    "medium": "mlx-community/whisper-medium",
+    "large-v3": "mlx-community/whisper-large-v3",
+    "large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+}
+
 # Whisper Compute Type auf macOS / Apple Silicon:
 # "int8" nutzt ARM NEON Vektor-Beschleunigung (3-4x schneller auf M1-M4)
 DEFAULT_COMPUTE_TYPE = "int8"

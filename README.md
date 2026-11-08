@@ -2,12 +2,17 @@
 
 Eine rein lokale Python-Pipeline zum Herunterladen von Podcasts, Transkribieren mit Whisper und Durchführen strukturierter NLP-Analysen mit lokalen Large Language Models (LLMs) via Ollama.
 
-## Highlights
+## Highlights (v0.2.0)
 
 - **100% Lokal & Privat:** Keine Audiodaten oder Transkripte verlassen Ihren Rechner.
-- **Schritt 1: Download:** Automatischer Abruf der neuesten Episoden aus RSS-Feeds inklusive Fortschrittsanzeige.
-- **Schritt 2: Transkription & Sprechererkennung:** Lokales Speech-to-Text mittels `faster-whisper` (CTranslate2) inklusive Zeitstempel-Segmentierung und optionaler Sprecher-Diarization (Sprechertrennung Jan vs. Olli) via `pyannote.audio`.
-- **Schritt 3: Lokale NLP-Analyse:** Extrahieren von Zusammenfassungen, Key Takeaways, Themen, Entitäten (NER) und Tonalität/Sentiment über lokale Modelle in [Ollama](https://ollama.com/) (Standard: `dolphin-llama3:8b`). Erkennt automatisch die echten Namen der Sprecher aus dem Dialog.
+- **Hardwarebeschleunigung (Apple Silicon GPU & CPU/CUDA):**
+  - **Apple Silicon Metal GPU:** Native Unterstützung für `mlx-whisper` auf Apple Silicon Macs (M1–M4) für extrem schnelle Transkriptionen (30–40x Echtzeit).
+  - **Multi-Plattform / CPU & CUDA:** Nahtloser Fallback auf `faster-whisper` (CTranslate2 mit ARM NEON int8 oder CUDA) auf Linux, Windows und Intel-Rechnern.
+  - **Intelligente Auto-Erkennung:** `--backend auto` wählt automatisch die schnellste Engine für Ihr System.
+- **Schritt 1: Download:** Automatischer Abruf von Episoden aus RSS-Feeds oder per Apple Podcasts Suche inklusive Fortschrittsanzeige und Metadaten-Cache.
+- **Schritt 2: Transkription & Sprechererkennung:** Zeitstempel-Segmentierung und automatische Sprecher-Diarization (Sprechertrennung Jan vs. Olli) via `pyannote.audio` (mit Apple Silicon MPS Beschleunigung).
+- **Schritt 3: Lokale NLP-Analyse:** Themen- und Kapitel-Segmentierung mit Timestamps, Key Takeaways, Zusammenfassungen, Named Entity Recognition (NER) und dynamische Sprechernamen-Auflösung via [Ollama](https://ollama.com/) (z.B. `qwen2.5:14b` oder `dolphin-llama3:8b`).
+- **Schritt 4: Sprecher- & Profiling-Analyse (Optional):** Quantitative Sprecherstatistiken (Redezeit, Wortanzahl, Sprechgeschwindigkeit WPM, längste Monologe, Top-Füllwörter) sowie psychologisches Charakter-, Werte- und Beziehungs-Profiling.
 - **Reports:** Ausgabe sowohl als maschinenlesbares JSON als auch als lesbarer Markdown-Report.
 
 ---
@@ -22,11 +27,12 @@ podcast-nlp/
 │   └── reports/        # Analyse-Reports (.json & .md)
 ├── podcast_pipeline/
 │   ├── __init__.py
-│   ├── config.py       # Modell- & Pfadkonfiguration
-│   ├── downloader.py   # RSS-Feed & Audio-Download
-│   ├── transcriber.py  # faster-whisper Transkription
-│   ├── nlp_analyzer.py # Ollama LLM-Analyse
-│   └── pipeline.py     # End-to-End Orchestrierung
+│   ├── config.py          # Modell- & Pfadkonfiguration
+│   ├── downloader.py      # RSS-Feed & Audio-Download
+│   ├── transcriber.py     # Multi-Backend Transkription (mlx-whisper / faster-whisper)
+│   ├── nlp_analyzer.py    # Ollama LLM-Analyse & Themenextraktion
+│   ├── speaker_analyzer.py# Sprecherstatistiken & Charakterprofiling
+│   └── pipeline.py        # Orchestrierung der Pipeline-Schritte
 ├── main.py             # CLI-Interface
 ├── requirements.txt
 └── README.md
@@ -118,14 +124,20 @@ python3 main.py download --feed "https://feeds.megaphone.fm/GLT4060321204" --lim
 Verarbeitet alle heruntergeladenen Audio-Dateien in `data/audio/`, die noch kein Transkript haben (Batch-Modus):
 
 ```bash
-# Alle noch nicht transkribierten Episoden im Batch abarbeiten:
+# Alle noch nicht transkribierten Episoden im Batch abarbeiten (Standard: --backend auto):
 python3 main.py transcribe
 
-# Oder gezielt eine einzelne Datei:
+# Explizit das Apple Silicon GPU Metal-Backend anfordern:
+python3 main.py transcribe --backend mlx
+
+# Oder auf CPU/CUDA mit CTranslate2 (faster-whisper) zwingen:
+python3 main.py transcribe --backend faster-whisper
+
+# Gezielt eine einzelne Datei transkribieren:
 python3 main.py transcribe --file data/audio/meine_aufnahme.mp3
 
 # Mit angepasster Modellgröße oder Threads:
-python3 main.py transcribe --whisper-model medium --threads 8
+python3 main.py transcribe --whisper-model large-v3-turbo --threads 8
 ```
 
 ### 3. Schritt: LLM-Analyse & Reports (`analyze`)
