@@ -417,7 +417,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Backticks:
                 raw = resp["message"]["content"].strip()
                 if "{" in raw and "}" in raw:
                     raw_json = raw[raw.find("{") : raw.rfind("}") + 1]
-                    parsed = json.loads(raw_json)
+                    parsed = json.loads(raw_json, strict=False)
                     evaluations.extend(parsed.get("evaluations", []))
             except Exception as e:
                 print(f"[SpeakerAnalyzer] Hinweis: Micro-Batch {b_idx // batch_size + 1} nutzte Heuristik-Fallback ({e})")
@@ -583,7 +583,7 @@ Antworte ausschließlich im folgenden JSON-Format ohne Markdown-Codeblöcke:
             raw = resp["message"]["content"].strip()
             if "{" in raw and "}" in raw:
                 raw_json = raw[raw.find("{") : raw.rfind("}") + 1]
-                return json.loads(raw_json)
+                return json.loads(raw_json, strict=False)
         except Exception as e:
             print(f"[SpeakerAnalyzer] Fehler beim Sprecher-Profiling: {e}")
 
