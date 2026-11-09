@@ -10,6 +10,12 @@ from tqdm import tqdm
 
 from .config import AUDIO_DIR, get_podcast_audio_dir
 
+# Standard Browser User-Agent, um 403-Sperren von Podcast-CDNs (z.B. Acast, Megaphone) zu verhindern
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Accept": "*/*",
+}
+
 
 @dataclass
 class PodcastEpisode:
@@ -39,7 +45,7 @@ class PodcastDownloader:
             "limit": limit,
         }
         try:
-            resp = requests.get(search_url, params=params, timeout=10)
+            resp = requests.get(search_url, params=params, headers=DEFAULT_HEADERS, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             results = []
@@ -63,7 +69,7 @@ class PodcastDownloader:
         self, feed_url: str, limit: int = 5
     ) -> list[PodcastEpisode]:
         """Liest einen RSS-Feed ein und gibt Metadaten der neuesten Episoden zurück."""
-        feed = feedparser.parse(feed_url)
+        feed = feedparser.parse(feed_url, agent=DEFAULT_HEADERS["User-Agent"])
         if not feed.entries:
             raise ValueError(f"Keine Episoden im RSS-Feed gefunden: {feed_url}")
 
@@ -178,7 +184,7 @@ class PodcastDownloader:
             return target_file
 
         print(f"[Downloader] Starte Download: {episode.title} -> {target_file.name}")
-        response = requests.get(episode.audio_url, stream=True, timeout=30)
+        response = requests.get(episode.audio_url, headers=DEFAULT_HEADERS, stream=True, timeout=30)
         response.raise_for_status()
 
         total_size = int(response.headers.get("content-length", 0))
